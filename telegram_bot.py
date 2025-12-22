@@ -514,4 +514,420 @@ async def show_assets_button(message: types.Message):
         await message.answer(f"🤖 {MAINTENANCE_MSG}")
 
 @dp.message(F.text == "🤝 Торговля")
-async def 
+async def trade_button(message: types.Message):
+    """Кнопка торговли - система обмена"""
+    try:
+        if STATS.get("maintenance_mode", False):
+            await message.answer(f"⚠️ {MAINTENANCE_MSG}")
+            return
+        
+        chat_id = message.chat.id
+        user_id = message.from_user.id
+        
+        if chat_id not in ACTIVE_GAMES:
+            await message.answer("⚠️ Активная игра не найдена!")
+            return
+        
+        game = ACTIVE_GAMES[chat_id]
+        
+        # Проверяем, достаточно ли игроков
+        if len(game.get("players", [])) < 2:
+            await message.answer("❌ <b>Недостаточно игроков для торговли!</b>\n\n"
+                               "Нужно минимум 2 игрока в игре",
+                               parse_mode="HTML")
+            return
+        
+        # Находим текущего игрока
+        current_player = next((p for p in game.get("players", []) if p["id"] == user_id), None)
+        if not current_player:
+            await message.answer("⚠️ Вы не участвуете в этой игре!")
+            return
+        
+        # Другие игроки
+        other_players = [p for p in game.get("players", []) if p["id"] != user_id]
+        
+        if not other_players:
+            await message.answer("❌ Нет других игроков для торговли!")
+            return
+        
+        # Создаем клавиатуру для торговли
+        kb = InlineKeyboardBuilder()
+        
+        # Кнопки для предложения денег
+        money_options = [50, 100, 200, 500, 1000]
+        for amount in money_options:
+            if current_player.get("balance", 1500) >= amount:
+                kb.button(text=f"💰 Предложить {amount}$", callback_data=f"trade_offer_money_{amount}")
+        
+        # Кнопки для предложения недвижимости
+        player_properties = []
+        for prop_id, prop_info in game.get("properties", {}).items():
+            if prop_info.get("owner") == user_id and prop_id in BOARD:
+                prop_name = BOARD[prop_id][0]
+                player_properties.append((prop_id, prop_name))
+        
+        for prop_id, prop_name in player_properties[:5]:  # Ограничиваем 5 свойствами
+            kb.button(text=f"🏠 {prop_name}", callback_data=f"trade_offer_prop_{prop_id}")
+        
+        # Кнопка отмены
+        kb.button(text="❌ Отменить", callback_data="trade_cancel")
+        
+        kb.adjust(2, 2, 1)  # Разметка кнопок
+        
+        await message.answer(
+            "🤝 <b>Система торговли</b>\n\n"
+            "Выберите, что хотите предложить:\n\n"
+            f"💰 Ваш баланс: <b>{current_player.get('balance', 1500)}$</b>\n"
+            f"🏠 Ваша недвижимость: <b>{len(player_properties)} объектов</b>\n\n"
+            "Или выберите игрока для прямых переговоров:",
+            parse_mode="HTML",
+            reply_markup=kb.as_markup()
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка в trade_button: {e}")
+        await message.answer(f"🤖 {MAINTENANCE_MSG}")
+
+# ==================== CALLBACK ОБРАБОТЧИКИ ДЛЯ ТОРГОВЛИ ====================
+@dp.callback_query(F.data.startswith("trade_offer_money_"))
+async def trade_offer_money(c: types.CallbackQuery):
+    """Предложение денег в торговле"""
+    try:
+        amount = int(c.data.split("_")[3])
+        chat_id = c.message.chat.id
+        user_id = c.from_user.id
+        
+        if chat_id not in ACTIVE_GAMES:
+            await c.answer("⚠️ Игра не найдена!", show_alert=True)
+            return
+        
+        game = ACTIVE_GAMES[chat_id]
+        player = next((p for p in game.get("players", []) if p["id"] == user_id), None)
+        
+        if not player:
+            await c.answer("⚠️ Вы не в игре!", show_alert=True)
+            return
+        
+        if player.get("balance", 1500) < amount:
+            await c.answer("❌ Недостаточно средств!", show_alert=True)
+            return
+        
+        # Создаем клавиатуру для выбора игрока
+        kb = InlineKeyboardBuilder()
+        other_players = [p for p in game.get("players", []) if p["id"] != user_id]
+        
+        for other in other_players:
+            kb.button(text=f"🤝 {other['name']}", callback_data=f"trade_to_{other['id']}_money_{amount}")
+        
+        kb.button(text="❌ Отмена", callback_data="trade_cancel")
+        kb.adjust(1)
+        
+        await c.message.edit_text(
+            f"💰 <b>Предложение: {amount}$</b>\n\n"
+            "Выберите игрока, которому хотите предложить деньги:",
+            parse_mode="HTML",
+            reply_markup=kb.as_markup()
+        )
+        
+        await c.answer()
+        
+    except Exception as e:
+        logger.error(f"Ошибка в trade_offer_money: {e}")
+        await c.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
+
+@dp.callback_query(F.data.startswith("trade_offer_prop_"))
+async def trade_offer_property(c: types.CallbackQuery):
+    """Предложение недвижимости в торговле"""
+    try:
+        prop_id = int(c.data.split("_")[3])
+        chat_id = c.message.chat.id
+        user_id = c.from_user.id
+        
+        if chat_id not in ACTIVE_GAMES:
+            await c.answer("⚠️ Игра не найдена!", show_alert=True)
+            return
+        
+        game = ACTIVE_GAMES[chat_id]
+        
+        # Проверяем, что игрок владеет этой недвижимостью
+        if prop_id not in game.get("properties", {}) or game["properties"][prop_id].get("owner") != user_id:
+            await c.answer("❌ Вы не владеете этой недвижимостью!", show_alert=True)
+            return
+        
+        prop_name = BOARD[prop_id][0] if prop_id in BOARD else f"Клетка {prop_id}"
+        
+        # Создаем клавиатуру для выбора игрока
+        kb = InlineKeyboardBuilder()
+        other_players = [p for p in game.get("players", []) if p["id"] != user_id]
+        
+        for other in other_players:
+            kb.button(text=f"🤝 {other['name']}", callback_data=f"trade_to_{other['id']}_prop_{prop_id}")
+        
+        kb.button(text="❌ Отмена", callback_data="trade_cancel")
+        kb.adjust(1)
+        
+        await c.message.edit_text(
+            f"🏠 <b>Предложение недвижимости: {prop_name}</b>\n\n"
+            f"💰 Цена покупки: {BOARD[prop_id][1]}$\n"
+            f"💸 Аренда: {BOARD[prop_id][2]}$\n\n"
+            "Выберите игрока, которому хотите предложить:",
+            parse_mode="HTML",
+            reply_markup=kb.as_markup()
+        )
+        
+        await c.answer()
+        
+    except Exception as e:
+        logger.error(f"Ошибка в trade_offer_property: {e}")
+        await c.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
+
+@dp.callback_query(F.data.startswith("trade_to_"))
+async def trade_to_player(c: types.CallbackQuery):
+    """Предложение сделки конкретному игроку"""
+    try:
+        parts = c.data.split("_")
+        target_player_id = int(parts[2])
+        offer_type = parts[3]  # money или prop
+        offer_value = parts[4]  # amount или prop_id
+        
+        chat_id = c.message.chat.id
+        user_id = c.from_user.id
+        
+        if chat_id not in ACTIVE_GAMES:
+            await c.answer("⚠️ Игра не найдена!", show_alert=True)
+            return
+        
+        game = ACTIVE_GAMES[chat_id]
+        
+        # Находим игроков
+        from_player = next((p for p in game.get("players", []) if p["id"] == user_id), None)
+        to_player = next((p for p in game.get("players", []) if p["id"] == target_player_id), None)
+        
+        if not from_player or not to_player:
+            await c.answer("❌ Игрок не найден!", show_alert=True)
+            return
+        
+        # Формируем предложение
+        if offer_type == "money":
+            amount = int(offer_value)
+            offer_text = f"💰 {amount}$"
+            # Проверяем баланс
+            if from_player.get("balance", 1500) < amount:
+                await c.answer("❌ Недостаточно средств!", show_alert=True)
+                return
+        else:  # property
+            prop_id = int(offer_value)
+            prop_name = BOARD[prop_id][0] if prop_id in BOARD else f"Клетка {prop_id}"
+            offer_text = f"🏠 {prop_name}"
+            # Проверяем владение
+            if prop_id not in game.get("properties", {}) or game["properties"][prop_id].get("owner") != user_id:
+                await c.answer("❌ Вы не владеете этой недвижимостью!", show_alert=True)
+                return
+        
+        # Сохраняем предложение в игре
+        if "trade_offers" not in game:
+            game["trade_offers"] = []
+        
+        game["trade_offers"].append({
+            "from_player_id": user_id,
+            "from_player_name": from_player.get("name", "Неизвестно"),
+            "to_player_id": target_player_id,
+            "to_player_name": to_player.get("name", "Неизвестно"),
+            "offer_type": offer_type,
+            "offer_value": offer_value,
+            "created_at": datetime.now().isoformat()
+        })
+        
+        # Уведомляем получателя
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f"🤝 <b>Предложение сделки от {from_player['name']}</b>\n\n"
+                     f"📦 Предложение: {offer_text}\n\n"
+                     f"💬 Чтобы принять или отклонить, используйте команду /trade",
+                parse_mode="HTML"
+            )
+        except:
+            pass  # Если не удалось отправить сообщение
+        
+        await c.message.edit_text(
+            f"✅ <b>Предложение отправлено {to_player['name']}!</b>\n\n"
+            f"📦 Ваше предложение: {offer_text}\n\n"
+            f"⏳ Ожидайте ответа...",
+            parse_mode="HTML"
+        )
+        
+        await c.answer("✅ Предложение отправлено!")
+        
+    except Exception as e:
+        logger.error(f"Ошибка в trade_to_player: {e}")
+        await c.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
+
+@dp.callback_query(F.data == "trade_cancel")
+async def trade_cancel(c: types.CallbackQuery):
+    """Отмена торговли"""
+    await c.message.edit_text(
+        "❌ <b>Торговля отменена</b>\n\n"
+        "Возвращаюсь в игровое меню...",
+        parse_mode="HTML"
+    )
+    await c.answer()
+
+@dp.callback_query(F.data == "show_rules")
+async def show_rules(c: types.CallbackQuery):
+    """Показать правила игры (как в вашем коде)"""
+    try:
+        if STATS.get("maintenance_mode", False):
+            await c.answer(MAINTENANCE_MSG, show_alert=True)
+            return
+        
+        rules_text = (
+            "📖 <b>Правила Monopoly Premium:</b>\n\n"
+            "1. 🏁 Каждый игрок начинает с <b>1500$</b> на позиции <b>Старт</b>\n"
+            "2. 🎲 По очереди бросайте кубик и передвигайтесь по полю\n"
+            "3. 🏠 При попадании на свободную клетку можете её купить\n"
+            "4. 💰 При попадании на чужую клетку платите аренду владельцу\n"
+            "5. 🎨 Собирайте наборы одного цвета для увеличения аренды\n"
+            "6. 🏘️ Стройте дома (до 4) и отели для увеличения доходов\n"
+            "7. 🏦 Цель - остаться последним непобанкротившимся игроком\n\n"
+            "🎯 <b>Особенности Premium версии:</b>\n"
+            "• 🌐 Web-статистика в реальном времени\n"
+            "• 🏆 Система достижений и наград\n"
+            "• 🤝 Поддержка торговли между игроками\n"
+            "• 💾 Автосохранение прогресса в БД\n"
+            "• 👥 Поддержка до 8 игроков одновременно\n\n"
+            "⚠️ <b>Важно:</b>\n"
+            "• Минимум 2 игрока для начала\n"
+            "• Используйте /hide чтобы скрыть меню\n"
+            "• Игра сохраняется автоматически\n\n"
+            "👑 <b>Версия Темного Принца включает:</b>\n"
+            "• Улучшенную графику\n"
+            "• Расширенные возможности\n"
+            "• Эксклюзивные функции"
+        )
+        
+        # Создаем клавиатуру для правил
+        kb = InlineKeyboardBuilder()
+        kb.button(text="◀️ Назад в меню", callback_data="back_to_main")
+        kb.adjust(1)
+        
+        await c.message.answer(rules_text, parse_mode="HTML", reply_markup=kb.as_markup())
+        await c.answer()
+        
+    except Exception as e:
+        logger.error(f"Ошибка в show_rules: {e}")
+        await c.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
+
+@dp.callback_query(F.data == "show_developer")
+async def show_developer(c: types.CallbackQuery):
+    """Показать информацию о разработчике (как в вашем коде)"""
+    try:
+        if STATS.get("maintenance_mode", False):
+            await c.answer(MAINTENANCE_MSG, show_alert=True)
+            return
+        
+        dev_text = (
+            "👨‍💻 <b>О разработчике:</b>\n\n"
+            f"<b>Разработчик:</b> {DEV_TAG}\n"
+            "<b>Версия бота:</b> Premium v2.5\n"
+            "<b>Титул:</b> Темный Принц (Dark Prince)\n"
+            "<b>Дата релиза:</b> 2024.12.18\n"
+            "<b>Технологии:</b> Python, aiogram, Flask, SQLite\n\n"
+            "✨ <b>Особенности этой версии:</b>\n"
+            "• 🎨 Полностью переработанный интерфейс\n"
+            "• 🌐 Web-панель управления и мониторинга\n"
+            "• 🎮 Улучшенная система игрового процесса\n"
+            "• 💾 База данных для сохранения прогресса\n"
+            "• 👥 Поддержка групповых игр до 8 человек\n"
+            "• 📊 Подробная статистика и аналитика\n\n"
+            "💡 <b>Идеи и предложения:</b>\n"
+            f"Пишите разработчику: {DEV_TAG}\n\n"
+            "⭐ Если вам нравится бот, поделитесь им с друзьями!\n\n"
+            "👑 <i>Создано с любовью Темным Принцем</i>"
+        )
+        
+        # Создаем клавиатуру
+        kb = InlineKeyboardBuilder()
+        kb.button(text="◀️ Назад в меню", callback_data="back_to_main")
+        
+        # WebApp кнопка
+        domain = os.environ.get('RENDER_EXTERNAL_HOSTNAME', f'localhost:{PORT}')
+        web_url = f"https://{domain}" if 'localhost' not in domain else f"http://localhost:{PORT}"
+        kb.button(text="🌐 Web-статус", web_app=WebAppInfo(url=web_url))
+        
+        kb.adjust(1)
+        
+        await c.message.answer(dev_text, parse_mode="HTML", reply_markup=kb.as_markup())
+        await c.answer()
+        
+    except Exception as e:
+        logger.error(f"Ошибка в show_developer: {e}")
+        await c.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
+
+@dp.callback_query(F.data == "back_to_main")
+async def back_to_main(c: types.CallbackQuery):
+    """Вернуться в главное меню"""
+    try:
+        await c.message.delete()
+        await cmd_monopoly(c.message)
+        await c.answer()
+    except Exception as e:
+        logger.error(f"Ошибка в back_to_main: {e}")
+        await c.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
+
+# ==================== БАЗА ДАННЫХ ====================
+async def init_db():
+    """Инициализация базы данных"""
+    try:
+        import aiosqlite
+        async with aiosqlite.connect('monopoly_premium.db') as db:
+            await db.execute("""CREATE TABLE IF NOT EXISTS players (
+                chat_id int, user_id int, name text, 
+                balance int DEFAULT 1500, pos int DEFAULT 0, 
+                jail int DEFAULT 0, PRIMARY KEY(chat_id, user_id))""")
+            await db.execute("""CREATE TABLE IF NOT EXISTS property (
+                chat_id int, cell_idx int, owner_id int, houses int DEFAULT 0, 
+                PRIMARY KEY(chat_id, cell_idx))""")
+            await db.execute("CREATE TABLE IF NOT EXISTS awards (user_id int, title text, chat_id int)")
+            await db.commit()
+        logger.info("✅ База данных инициализирована")
+    except Exception as e:
+        logger.error(f"❌ Ошибка инициализации БД: {e}")
+
+# ==================== ЗАПУСК БОТА ====================
+async def start_bot():
+    """Асинхронный запуск бота"""
+    try:
+        logger.info("🤖 Инициализация базы данных...")
+        await init_db()
+        
+        logger.info("🚀 Telegram бот запускается...")
+        logger.info("👑 Темный Принц активирован")
+        
+        # Удаляем вебхук (если был)
+        await bot.delete_webhook(drop_pending_updates=True)
+        
+        # Запускаем поллинг
+        await dp.start_polling(bot)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при запуске бота: {e}")
+        raise
+
+def main():
+    """Основная функция запуска"""
+    logger.info("=" * 60)
+    logger.info("🎮 MONOPOLY PREMIUM BOT")
+    logger.info(f"👑 Версия: {STATS['version']}")
+    logger.info(f"🤴 Разработчик: {STATS.get('prince_title', 'Темный Принц')}")
+    logger.info(f"🌐 Web-панель: http://localhost:{PORT}")
+    logger.info("=" * 60)
+    
+    if STATS.get("maintenance_mode", False):
+        logger.warning(f"⚠️  Режим обслуживания: {STATS['maintenance_msg']}")
+    
+    # Запускаем бота
+    asyncio.run(start_bot())
+
+if __name__ == "__main__":
+    main()
