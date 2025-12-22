@@ -2881,3 +2881,1058 @@ async def admin_toggle_maintenance(callback: CallbackQuery):
         logger.error(f"Ошибка в admin_toggle_maintenance: {e}")
         await callback.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
 
+async def admin_cleanup(callback: CallbackQuery):
+    """Очистить неактивные игры"""
+    try:
+        user_id = callback.from_user.id
+        
+        if user_id not in ADMINS:
+            await callback.answer("⛔ Доступ запрещен!", show_alert=True)
+            return
+        
+        # Очищаем старые ожидающие игры
+        removed_waiting = 0
+        current_time = datetime.now()
+        
+        for chat_id in list(WAITING_GAMES.keys()):
+            game = WAITING_GAMES[chat_id]
+            created_at = game.get("created_at")
+            
+            if isinstance(created_at, datetime):
+                age = current_time - created_at
+                if age.total_seconds() > 600:  # 10 минут
+                    if game.get("timer_task"):
+                        game["timer_task"].cancel()
+                    del WAITING_GAMES[chat_id]
+                    removed_waiting += 1
+        
+        # Очищаем старые активные игры
+        removed_active = 0
+        for chat_id in list(ACTIVE_GAMES.keys()):
+            game = ACTIVE_GAMES[chat_id]
+            if game.started_at:
+                age = current_time - game.started_at
+                if age.total_seconds() > 7200:  # 2 часа
+                    del ACTIVE_GAMES[chat_id]
+                    removed_active += 1
+        
+        # Очищаем старые скрытые меню
+        removed_hidden = 0
+        for user_id in list(HIDDEN_MENU_USERS.keys()):
+            chat_id = HIDDEN_MENU_USERS[user_id]
+            if chat_id not in ACTIVE_GAMES:
+                del HIDDEN_MENU_USERS[user_id]
+                removed_hidden += 1
+        
+        cleanup_text = (
+            f"🧹 <b>Очистка выполнена!</b>\n\n"
+            f"✅ Удалено:\n"
+            f"• Ожидающих игр: {removed_waiting}\n"
+            f"• Активных игр: {removed_active}\n"
+            f"• Скрытых меню: {removed_hidden}\n\n"
+            f"📊 Осталось:\n"
+            f"• Ожидающих игр: {len(WAITING_GAMES)}\n"
+            f"• Активных игр: {len(ACTIVE_GAMES)}\n"
+            f"• Скрытых меню: {len(HIDDEN_MENU_USERS)}"
+        )
+        
+        await callback.message.edit_text(
+            cleanup_text,
+            parse_mode="HTML",
+            reply_markup=admin_panel_kb()
+        )
+        
+        await callback.answer("✅ Очистка выполнена")
+        
+    except Exception as e:
+        logger.error(f"Ошибка в admin_cleanup: {e}")
+        await callback.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
+
+async def admin_export_stats(callback: CallbackQuery):
+    """Экспорт статистики"""
+    try:
+        user_id = callback.from_user.id
+        
+        if user_id not in ADMINS:
+            await callback.answer("⛔ Доступ запрещен!", show_alert=True)
+            return
+        
+        # Создаем текст для экспорта
+        export_text = f"📊 Экспорт статистики {datetime.now().strftime('%Y-%m-%d')}\n\n"
+        
+        # Общая статистика
+        export_text += "=== ОБЩАЯ СТАТИСТИКА ===\n"
+        export_text += f"Всего игроков: {len(USER_STATS)}\n"
+        export_text += f"Активных игр: {len(ACTIVE_GAMES)}\n"
+        export_text += f"Ожидающих игр: {len(WAITING_GAMES)}\n\n"
+        
+        # Топ-20 игроков
+        export_text += "=== ТОП-20 ИГРОКОВ ===\n"
+        top_players = get_top_players(20)
+        
+        for i, player in enumerate(top_players, 1):
+            name = player["first_name"]
+            if player["username"]:
+                name = f"@{player['username']}"
+            
+            export_text += (
+                f"{i}. {name}\n"
+                f"   Игр: {player['games']} | Побед: {player['wins']}\n"
+                f"   Винрейт: {player['win_rate']:.1f}%\n"
+            )
+        
+        # Сохраняем в файл
+        import os
+        from modules.config import DATA_DIR
+        
+        if not os.path.exists(DATA_DIR):
+            os.makedirs(DATA_DIR)
+        
+        filename = f"{DATA_DIR}/stats_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(export_text)
+        
+        await callback.message.edit_text(
+            f"📁 <b>Статистика экспортирована!</b>\n\n"
+            f"✅ Файл сохранен:\n"
+            f"<code>{filename}</code>\n\n"
+            f"📊 Данные:\n"
+            f"• Игроков: {len(USER_STATS)}\n"
+            f"• Топ-20 в файле",
+            parse_mode="HTML",
+            reply_markup=admin_panel_kb()
+        )
+        
+        await callback.answer("✅ Экспорт завершен")
+        
+    except Exception as e:
+        logger.error(f"Ошибка в admin_export_stats: {e}")
+        await callback.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
+
+async def admin_end_game(callback: CallbackQuery):
+    """Завершить игру"""
+    try:
+        chat_id = int(callback.data.split("_")[3])
+        user_id = callback.from_user.id
+        
+        if user_id not in ADMINS:
+            await callback.answer("⛔ Доступ запрещен!", show_alert=True)
+            return
+        
+        if chat_id not in ACTIVE_GAMES:
+            await callback.message.edit_text(
+                f"❌ <b>Игра не найдена!</b>\n\n"
+                f"Игра в чате {chat_id} уже завершена.",
+                parse_mode="HTML",
+                reply_markup=admin_panel_kb()
+            )
+            return
+        
+        # Получаем игру
+        game = ACTIVE_GAMES[chat_id]
+        
+        # Определяем победителя по балансу
+        winner = max(game.players, key=lambda p: p.balance)
+        
+        # Обновляем статистику
+        for player in game.players:
+            win = (player.id == winner.id)
+            update_user_stats(
+                player.id,
+                player.username,
+                player.name,
+                win=win,
+                money=player.balance if win else 0
+            )
+        
+        # Удаляем игру
+        del ACTIVE_GAMES[chat_id]
+        
+        # Очищаем скрытые меню для этого чата
+        for uid in list(HIDDEN_MENU_USERS.keys()):
+            if HIDDEN_MENU_USERS[uid] == chat_id:
+                del HIDDEN_MENU_USERS[uid]
+        
+        await callback.message.edit_text(
+            f"⏹️ <b>Игра завершена администратором!</b>\n\n"
+            f"🏆 Победитель: {winner.name}\n"
+            f"💰 Баланс: {winner.balance}$\n"
+            f"🎮 Игроков: {len(game.players)}\n"
+            f"🔄 Ходов: {game.turn}\n\n"
+            f"✅ Статистика сохранена",
+            parse_mode="HTML",
+            reply_markup=admin_panel_kb()
+        )
+        
+        await callback.answer("✅ Игра завершена")
+        
+    except Exception as e:
+        logger.error(f"Ошибка в admin_end_game: {e}")
+        await callback.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
+
+async def admin_manage_admins(callback: CallbackQuery):
+    """Управление админами"""
+    try:
+        user_id = callback.from_user.id
+        
+        if user_id not in ADMINS:
+            await callback.answer("⛔ Доступ запрещен!", show_alert=True)
+            return
+        
+        admins_text = f"👑 <b>Управление администраторами</b>\n\n"
+        admins_text += f"📋 <b>Текущие админы ({len(ADMINS)}):</b>\n"
+        
+        for admin_id in ADMINS:
+            # Пытаемся найти имя админа в USER_STATS
+            admin_name = f"ID: {admin_id}"
+            for uid, stats in USER_STATS.items():
+                if uid == admin_id:
+                    admin_name = stats.get("first_name", f"ID: {admin_id}")
+                    if stats.get("username"):
+                        admin_name = f"@{stats['username']}"
+                    break
+            
+            admins_text += f"• {admin_name}\n"
+        
+        admins_text += f"\n👇 <b>Выберите действие:</b>"
+        
+        from modules.keyboards import admin_manage_admins_kb
+        await callback.message.edit_text(
+            admins_text,
+            parse_mode="HTML",
+            reply_markup=admin_manage_admins_kb()
+        )
+        
+        await callback.answer()
+        
+    except Exception as e:
+        logger.error(f"Ошибка в admin_manage_admins: {e}")
+        await callback.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
+
+# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+
+async def show_rules(callback: CallbackQuery):
+    """Показать правила"""
+    try:
+        rules_text = (
+            "📖 <b>Правила Monopoly Premium:</b>\n\n"
+            "1. 🏁 Каждый игрок начинает с <b>1500$</b>\n"
+            "2. 🎲 По очереди бросайте 2 кубика\n"
+            "3. 🏠 При попадании на свободную клетку можете её купить\n"
+            "4. 💰 На чужой клетке платите аренду владельцу\n"
+            "5. 🎨 Собирайте все улицы одного цвета\n"
+            "6. 🏘️ Стройте дома (до 4) и отели\n"
+            "7. 💸 Заложите недвижимость для быстрых денег\n"
+            "8. 🤝 Торгуйтесь с другими игроками\n"
+            "9. ⛓️ В тюрьме можно выйти за 50$ или дублем\n"
+            "10. 🏆 Цель - остаться последним непобанкротившимся\n\n"
+            "<b>📊 Арендная плата:</b>\n"
+            "• Без домов: базовая\n"
+            "• С полным набором: ×2\n"
+            "• С домами: по таблице\n"
+            "• С отелем: максимальная\n\n"
+            "<b>🚂 Железные дороги:</b>\n"
+            "• 1 дорога: 25$\n"
+            "• 2 дороги: 50$\n"
+            "• 3 дороги: 100$\n"
+            "• 4 дороги: 200$\n\n"
+            "<b>💡 Коммунальные предприятия:</b>\n"
+            "• 1 предприятие: 4×сумма кубиков\n"
+            "• 2 предприятия: 10×сумма кубиков\n\n"
+            "👑 <b>Версия Темного Принца v3.0</b>"
+        )
+        
+        kb = InlineKeyboardBuilder()
+        kb.button(text="◀️ Назад", callback_data="back_to_main")
+        kb.adjust(1)
+        
+        await callback.message.edit_text(rules_text, parse_mode="HTML", reply_markup=kb.as_markup())
+        await callback.answer()
+        
+    except Exception as e:
+        logger.error(f"Ошибка в show_rules: {e}")
+        await callback.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
+
+async def show_developer(callback: CallbackQuery):
+    """Показать информацию о разработчике"""
+    try:
+        dev_text = (
+            "👨‍💻 <b>О разработчике:</b>\n\n"
+            f"<b>Разработчик:</b> {DEV_TAG}\n"
+            "<b>Титул:</b> Темный Принц (Dark Prince)\n"
+            "<b>Версия:</b> Premium v3.0\n\n"
+            "👑 <b>Особенности версии:</b>\n"
+            "• Полная механика Монополии\n"
+            "• Inline меню при скрытии\n"
+            "• Система рейтинга игроков\n"
+            "• Админ панель\n"
+            "• Механика тюрьмы\n"
+            "• Залог недвижимости\n"
+            "• Строительство домов/отелей\n\n"
+            f"⭐ Отзывы и предложения: {DEV_TAG}"
+        )
+        
+        kb = InlineKeyboardBuilder()
+        kb.button(text="◀️ Назад", callback_data="back_to_main")
+        kb.adjust(1)
+        
+        await callback.message.answer(dev_text, parse_mode="HTML", reply_markup=kb.as_markup())
+        await callback.answer()
+        
+    except Exception as e:
+        logger.error(f"Ошибка в show_developer: {e}")
+        await callback.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
+
+async def back_to_main(callback: CallbackQuery):
+    """Вернуться в главное меню"""
+    try:
+        await callback.message.delete()
+        
+        is_group = callback.message.chat.type in ["group", "supergroup"]
+        user_id = callback.from_user.id
+        
+        header = f"{BANNER}\n\n🎲 <b>Monopoly Premium Edition</b>\n👑 Версия Темного Принца\n\n"
+        header += "🎮 <b>Выберите действие:</b>" if is_group else "👋 <b>Добро пожаловать!</b>"
+        
+        await callback.message.answer(
+            header,
+            parse_mode="HTML",
+            reply_markup=main_menu_kb(is_group=is_group, user_id=user_id)
+        )
+        
+        await callback.answer()
+        
+    except Exception as e:
+        logger.error(f"Ошибка в back_to_main: {e}")
+        await callback.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
+
+async def back_to_game(callback: CallbackQuery):
+    """Вернуться к игре"""
+    try:
+        chat_id = callback.message.chat.id
+        user_id = callback.from_user.id
+        
+        if chat_id not in ACTIVE_GAMES:
+            await callback.message.edit_text(
+                "❌ <b>Игра не найдена!</b>\n\n"
+                "Вернитесь в главное меню",
+                parse_mode="HTML",
+                reply_markup=back_button_kb("main")
+            )
+            return
+        
+        game = ACTIVE_GAMES[chat_id]
+        player = game.get_player_by_id(user_id)
+        
+        if not player:
+            await callback.message.edit_text(
+                "❌ <b>Вы не в игре!</b>",
+                parse_mode="HTML",
+                reply_markup=back_button_kb("main")
+            )
+            return
+        
+        # Проверяем, скрыто ли меню
+        if user_id in HIDDEN_MENU_USERS and HIDDEN_MENU_USERS[user_id] == chat_id:
+            await show_inline_menu(callback.message, user_id)
+        else:
+            current_player = game.get_current_player()
+            is_your_turn = current_player and current_player.id == user_id
+            
+            status_text = ""
+            if is_your_turn:
+                status_text = f"🎯 <b>Сейчас ваш ход!</b>\n"
+            else:
+                status_text = f"⏳ <b>Сейчас ходит: {current_player.name}</b>\n"
+            
+            await callback.message.edit_text(
+                f"🎮 <b>Возврат к игре</b>\n\n"
+                f"{status_text}"
+                f"👤 Игрок: {player.name}\n"
+                f"💰 Баланс: {player.balance}$\n"
+                f"📍 Позиция: {player.position}\n\n"
+                f"👇 <i>Используйте меню для управления</i>",
+                parse_mode="HTML",
+                reply_markup=inline_menu_kb()
+            )
+        
+        await callback.answer()
+        
+    except Exception as e:
+        logger.error(f"Ошибка в back_to_game: {e}")
+        await callback.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
+
+# ==================== ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ ====================
+
+async def handle_text_message(message: types.Message, bot: Bot):
+    """Обработка текстовых сообщений"""
+    try:
+        chat_id = message.chat.id
+        user_id = message.from_user.id
+        text = message.text.strip().lower()
+        
+        # Игнорируем команды
+        if text.startswith('/'):
+            return
+        
+        # Проверяем активную игру
+        if chat_id not in ACTIVE_GAMES:
+            return
+        
+        game = ACTIVE_GAMES[chat_id]
+        
+        # Простые команды в чате
+        if text in ["карта", "map"]:
+            await map_button(message)
+        
+        elif text in ["активы", "статус"]:
+            await assets_button(message)
+        
+        elif text in ["правила", "help"]:
+            await message.answer(
+                "📖 <b>Быстрые команды в чате:</b>\n\n"
+                "• карта - показать карту\n"
+                "• активы - мои активы\n"
+                "• правила - правила игры\n"
+                "• рейтинг - топ игроков\n\n"
+                "Для полного управления используйте меню",
+                parse_mode="HTML"
+            )
+        
+        elif text in ["рейтинг", "топ"]:
+            await cmd_rating(message)
+        
+        # Ответ на предложение покупки
+        elif text in ["купить", "buy", "да", "yes"]:
+            # Проверяем, есть ли ожидающая покупка
+            current_player = game.get_current_player()
+            if current_player and current_player.id == user_id:
+                position = current_player.position
+                if position in BOARD and position not in game.properties:
+                    await buy_property(types.CallbackQuery(
+                        message=message,
+                        data=f"buy_{position}",
+                        from_user=message.from_user
+                    ))
+        
+        elif text in ["пропустить", "skip", "нет", "no"]:
+            current_player = game.get_current_player()
+            if current_player and current_player.id == user_id:
+                position = current_player.position
+                if position in BOARD:
+                    await skip_property(types.CallbackQuery(
+                        message=message,
+                        data=f"skip_{position}",
+                        from_user=message.from_user
+                    ))
+        
+    except Exception as e:
+        logger.error(f"Ошибка в handle_text_message: {e}")
+
+# ==================== РЕГИСТРАЦИЯ ХЕНДЛЕРОВ ====================
+
+def register_handlers(dp: Dispatcher, bot: Bot):
+    """Регистрация всех обработчиков"""
+    
+    # Команды
+    dp.message.register(cmd_start, Command("start"))
+    dp.message.register(cmd_monopoly, Command("monopoly"))
+    dp.message.register(cmd_hide, Command("hide"))
+    dp.message.register(cmd_show, Command("show"))
+    dp.message.register(cmd_stats, Command("stats"))
+    dp.message.register(cmd_rating, Command("rating"))
+    dp.message.register(cmd_admin, Command("admin"))
+    
+    # Кнопки игры
+    dp.message.register(roll_dice_button, F.text == "🎲 Бросить кубик")
+    dp.message.register(build_button, F.text == "🏠 Построить/Заложить")
+    dp.message.register(assets_button, F.text == "📊 Мои активы")
+    dp.message.register(trade_button, F.text == "🤝 Торговля")
+    dp.message.register(map_button, F.text == "🗺️ Карта доски")
+    dp.message.register(hide_menu_button, F.text == "❌ Скрыть меню")
+    
+    # Текстовые сообщения
+    dp.message.register(handle_text_message, F.text)
+    
+    # Callback обработчики лобби
+    dp.callback_query.register(start_gathering, F.data == "start_player_gathering")
+    dp.callback_query.register(join_game, F.data.startswith("join_game_"))
+    dp.callback_query.register(leave_game, F.data.startswith("leave_game_"))
+    dp.callback_query.register(start_game, F.data.startswith("start_game_"))
+    dp.callback_query.register(stop_gathering, F.data.startswith("stop_gathering_"))
+    
+    # Callback обработчики меню
+    dp.callback_query.register(show_rules, F.data == "show_rules")
+    dp.callback_query.register(show_developer, F.data == "show_developer")
+    dp.callback_query.register(back_to_main, F.data == "back_to_main")
+    dp.callback_query.register(back_to_game, F.data == "back_to_game")
+    
+    # Callback inline меню
+    dp.callback_query.register(inline_roll_dice, F.data == "inline_roll_dice")
+    dp.callback_query.register(inline_build_menu, F.data == "inline_build_menu")
+    dp.callback_query.register(inline_mortgage_menu, F.data == "inline_mortgage_menu")
+    dp.callback_query.register(inline_assets, F.data == "inline_assets")
+    dp.callback_query.register(inline_trade_menu, F.data == "inline_trade_menu")
+    dp.callback_query.register(inline_board_map, F.data == "inline_board_map")
+    dp.callback_query.register(restore_menu_callback, F.data == "restore_menu")
+    
+    # Callback покупка недвижимости
+    dp.callback_query.register(buy_property, F.data.startswith("buy_"))
+    dp.callback_query.register(skip_property, F.data.startswith("skip_"))
+    
+    # Callback строительство
+    dp.callback_query.register(build_color_menu, F.data.startswith("build_color_"))
+    dp.callback_query.register(build_on_property, F.data.startswith("build_on_"))
+    dp.callback_query.register(do_build_house, F.data.startswith("do_build_house_"))
+    dp.callback_query.register(sell_house, F.data.startswith("sell_house_"))
+    
+    # Callback залог
+    dp.callback_query.register(mortgage_properties, F.data == "mortgage_properties")
+    dp.callback_query.register(do_mortgage, F.data.startswith("do_mortgage_"))
+    dp.callback_query.register(unmortgage_properties, F.data == "unmortgage_properties")
+    dp.callback_query.register(do_unmortgage, F.data.startswith("do_unmortgage_"))
+    
+        # Callback карта
+    dp.callback_query.register(map_top_row, F.data == "map_top_row")
+    dp.callback_query.register(map_right_row, F.data == "map_right_row")
+    dp.callback_query.register(map_bottom_row, F.data == "map_bottom_row")
+    dp.callback_query.register(map_left_row, F.data == "map_left_row")
+    dp.callback_query.register(map_cell_info, F.data.startswith("map_cell_"))
+    dp.callback_query.register(map_show_position, F.data.startswith("map_show_"))
+    
+    # Callback тюрьма
+    dp.callback_query.register(jail_roll_dice, F.data == "jail_roll_dice")
+    dp.callback_query.register(jail_pay_fine, F.data == "jail_pay_fine")
+    dp.callback_query.register(jail_use_card, F.data == "jail_use_card")
+    dp.callback_query.register(jail_skip_turn, F.data == "jail_skip_turn")
+    dp.callback_query.register(jail_rules, F.data == "jail_rules")
+    
+    # Callback рейтинг
+    dp.callback_query.register(rating_top_10, F.data == "rating_top_10")
+    dp.callback_query.register(rating_my_stats, F.data == "rating_my_stats")
+    dp.callback_query.register(rating_top_wins, F.data == "rating_top_wins")
+    dp.callback_query.register(rating_top_money, F.data == "rating_top_money")
+    dp.callback_query.register(rating_progress, F.data == "rating_progress")
+    
+    # Callback админ панель
+    dp.callback_query.register(admin_stats, F.data == "admin_stats")
+    dp.callback_query.register(admin_active_games, F.data == "admin_active_games")
+    dp.callback_query.register(admin_reload_config, F.data == "admin_reload_config")
+    dp.callback_query.register(admin_toggle_maintenance, F.data == "admin_toggle_maintenance")
+    dp.callback_query.register(admin_cleanup, F.data == "admin_cleanup")
+    dp.callback_query.register(admin_export_stats, F.data == "admin_export_stats")
+    dp.callback_query.register(admin_end_game, F.data.startswith("admin_end_game_"))
+    dp.callback_query.register(admin_manage_admins, F.data == "admin_manage_admins")
+    
+    logger.info(f"✅ Зарегистрировано хендлеров: {len(dp.message.handlers) + len(dp.callback_query.handlers)}")
+
+# ==================== ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ ====================
+
+async def handle_text_message(message: types.Message, bot: Bot):
+    """Обработка текстовых сообщений"""
+    try:
+        chat_id = message.chat.id
+        user_id = message.from_user.id
+        text = message.text.strip().lower()
+        
+        # Игнорируем команды
+        if text.startswith('/'):
+            return
+        
+        # Проверяем активную игру
+        if chat_id not in ACTIVE_GAMES:
+            return
+        
+        game = ACTIVE_GAMES[chat_id]
+        
+        # Простые команды в чате
+        if text in ["карта", "map"]:
+            await map_button(message)
+        
+        elif text in ["активы", "статус"]:
+            await assets_button(message)
+        
+        elif text in ["правила", "help"]:
+            await message.answer(
+                "📖 <b>Быстрые команды в чате:</b>\n\n"
+                "• карта - показать карту\n"
+                "• активы - мои активы\n"
+                "• правила - правила игры\n"
+                "• рейтинг - топ игроков\n\n"
+                "Для полного управления используйте меню",
+                parse_mode="HTML"
+            )
+        
+        elif text in ["рейтинг", "топ"]:
+            await cmd_rating(message)
+        
+        # Ответ на предложение покупки
+        elif text in ["купить", "buy", "да", "yes"]:
+            # Проверяем, есть ли ожидающая покупка
+            current_player = game.get_current_player()
+            if current_player and current_player.id == user_id:
+                position = current_player.position
+                if position in BOARD and position not in game.properties:
+                    await buy_property(types.CallbackQuery(
+                        message=message,
+                        data=f"buy_{position}",
+                        from_user=message.from_user
+                    ))
+        
+        elif text in ["пропустить", "skip", "нет", "no"]:
+            current_player = game.get_current_player()
+            if current_player and current_player.id == user_id:
+                position = current_player.position
+                if position in BOARD:
+                    await skip_property(types.CallbackQuery(
+                        message=message,
+                        data=f"skip_{position}",
+                        from_user=message.from_user
+                    ))
+        
+    except Exception as e:
+        logger.error(f"Ошибка в handle_text_message: {e}")
+
+# ==================== УТИЛИТЫ И МЕНЮ ====================
+
+async def show_inline_menu(message: types.Message, user_id: int):
+    """Показать inline меню"""
+    try:
+        chat_id = message.chat.id
+        
+        if chat_id not in ACTIVE_GAMES:
+            return
+        
+        game = ACTIVE_GAMES[chat_id]
+        player = game.get_player_by_id(user_id)
+        
+        if not player:
+            return
+        
+        current_player = game.get_current_player()
+        is_your_turn = current_player and current_player.id == user_id
+        
+        turn_info = ""
+        if is_your_turn:
+            turn_info = "🎯 <b>Сейчас ваш ход!</b>\n"
+        else:
+            turn_info = f"⏳ <b>Сейчас ходит: {current_player.name}</b>\n"
+        
+        menu_text = (
+            f"🎮 <b>Monopoly Premium - Inline меню</b>\n\n"
+            f"👤 Игрок: {player.name}\n"
+            f"💰 Баланс: {player.balance}$\n"
+            f"{turn_info}\n"
+            f"👇 <i>Используйте кнопки ниже:</i>"
+        )
+        
+        await message.answer(
+            menu_text,
+            parse_mode="HTML",
+            reply_markup=inline_menu_kb()
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка в show_inline_menu: {e}")
+
+# ==================== ОБНОВЛЕНИЕ ИГРОВОГО СОСТОЯНИЯ ====================
+
+async def update_game_state(chat_id: int, bot: Bot):
+    """Обновить состояние игры (для веб-панели)"""
+    try:
+        if chat_id not in ACTIVE_GAMES:
+            return None
+        
+        game = ACTIVE_GAMES[chat_id]
+        state = game.get_game_state()
+        
+        # Добавляем дополнительную информацию
+        state["players_detailed"] = []
+        for player in game.players:
+            player_data = {
+                "id": player.id,
+                "name": player.name,
+                "balance": player.balance,
+                "position": player.position,
+                "in_jail": player.in_jail,
+                "properties_count": len(player.properties),
+                "color": player.color,
+                "bankrupt": player.bankrupt
+            }
+            state["players_detailed"].append(player_data)
+        
+        state["properties"] = {}
+        for prop_id, prop_info in game.properties.items():
+            if prop_id in BOARD:
+                cell = BOARD[prop_id]
+                state["properties"][prop_id] = {
+                    "name": cell["name"],
+                    "owner": prop_info["owner"],
+                    "owner_name": prop_info["owner_name"],
+                    "houses": prop_info["houses"],
+                    "mortgaged": prop_info.get("mortgaged", False)
+                }
+        
+        state["board_size"] = 40
+        state["game_duration"] = (datetime.now() - game.started_at).seconds // 60
+        
+        return state
+        
+    except Exception as e:
+        logger.error(f"Ошибка в update_game_state: {e}")
+        return None
+
+# ==================== АВТОМАТИЧЕСКИЕ ПРОВЕРКИ ====================
+
+async def check_stuck_games():
+    """Проверка зависших игр"""
+    try:
+        current_time = datetime.now()
+        stuck_games = []
+        
+        for chat_id, game in ACTIVE_GAMES.items():
+            # Если игра идет больше 3 часов
+            game_duration = (current_time - game.started_at).seconds
+            if game_duration > 10800:  # 3 часа
+                stuck_games.append({
+                    "chat_id": chat_id,
+                    "duration": game_duration // 3600,
+                    "players": len(game.players),
+                    "turn": game.turn
+                })
+        
+        if stuck_games:
+            logger.warning(f"Найдены зависшие игры: {len(stuck_games)}")
+            for game in stuck_games:
+                logger.warning(f"Чат {game['chat_id']}: {game['duration']}ч, {game['players']} игроков, ход {game['turn']}")
+        
+        return stuck_games
+        
+    except Exception as e:
+        logger.error(f"Ошибка в check_stuck_games: {e}")
+        return []
+
+# ==================== ЭКСПОРТ ИГРЫ ====================
+
+def export_game_state(chat_id: int) -> Dict:
+    """Экспорт состояния игры"""
+    try:
+        if chat_id not in ACTIVE_GAMES:
+            return {"error": "Игра не найдена"}
+        
+        game = ACTIVE_GAMES[chat_id]
+        
+        export_data = {
+            "chat_id": chat_id,
+            "exported_at": datetime.now().isoformat(),
+            "game": {
+                "turn": game.turn,
+                "current_player_idx": game.current_player_idx,
+                "started_at": game.started_at.isoformat(),
+                "creator_id": game.creator_id,
+                "game_over": game.game_over,
+                "winner": game.winner.name if game.winner else None
+            },
+            "players": [],
+            "properties": game.properties
+        }
+        
+        for player in game.players:
+            player_data = {
+                "id": player.id,
+                "name": player.name,
+                "username": player.username,
+                "balance": player.balance,
+                "position": player.position,
+                "properties": player.properties,
+                "mortgaged_properties": player.mortgaged_properties,
+                "houses": player.houses,
+                "in_jail": player.in_jail,
+                "jail_turns": player.jail_turns,
+                "get_out_of_jail_cards": player.get_out_of_jail_cards,
+                "color": player.color,
+                "doubles_count": player.doubles_count,
+                "bankrupt": player.bankrupt
+            }
+            export_data["players"].append(player_data)
+        
+        return export_data
+        
+    except Exception as e:
+        logger.error(f"Ошибка в export_game_state: {e}")
+        return {"error": str(e)}
+
+# ==================== ИМПОРТ ИГРЫ ====================
+
+def import_game_state(import_data: Dict) -> bool:
+    """Импорт состояния игры"""
+    try:
+        if "chat_id" not in import_data:
+            return False
+        
+        chat_id = import_data["chat_id"]
+        
+        # Создаем новую игру
+        game_data = import_data["game"]
+        game = MonopolyGame(chat_id, game_data["creator_id"])
+        
+        # Восстанавливаем базовые данные
+        game.turn = game_data["turn"]
+        game.current_player_idx = game_data["current_player_idx"]
+        game.started_at = datetime.fromisoformat(game_data["started_at"])
+        game.game_over = game_data["game_over"]
+        
+        # Восстанавливаем игроков
+        for player_data in import_data["players"]:
+            player = MonopolyPlayer(
+                player_data["id"],
+                player_data["name"],
+                player_data.get("username", "")
+            )
+            
+            # Восстанавливаем состояние
+            player.balance = player_data["balance"]
+            player.position = player_data["position"]
+            player.properties = player_data["properties"]
+            player.mortgaged_properties = player_data["mortgaged_properties"]
+            player.houses = player_data["houses"]
+            player.in_jail = player_data["in_jail"]
+            player.jail_turns = player_data["jail_turns"]
+            player.get_out_of_jail_cards = player_data["get_out_of_jail_cards"]
+            player.color = player_data["color"]
+            player.doubles_count = player_data["doubles_count"]
+            player.bankrupt = player_data["bankrupt"]
+            
+            game.players.append(player)
+        
+        # Восстанавливаем свойства
+        game.properties = import_data["properties"]
+        
+        # Восстанавливаем победителя
+        if game_data["winner"]:
+            for player in game.players:
+                if player.name == game_data["winner"]:
+                    game.winner = player
+                    break
+        
+        # Сохраняем игру
+        ACTIVE_GAMES[chat_id] = game
+        
+        logger.info(f"Игра в чате {chat_id} успешно импортирована")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Ошибка в import_game_state: {e}")
+        return False
+
+# ==================== АВТОСЕЙВ ====================
+
+async def autosave_games():
+    """Автоматическое сохранение игр"""
+    try:
+        from modules.config import DATA_DIR
+        import os
+        import json
+        
+        if not os.path.exists(DATA_DIR):
+            os.makedirs(DATA_DIR)
+        
+        saved_games = 0
+        for chat_id, game in ACTIVE_GAMES.items():
+            try:
+                export_data = export_game_state(chat_id)
+                if "error" not in export_data:
+                    filename = f"{DATA_DIR}/autosave_{chat_id}_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+                    with open(filename, 'w', encoding='utf-8') as f:
+                        json.dump(export_data, f, ensure_ascii=False, indent=2)
+                    saved_games += 1
+            except Exception as e:
+                logger.error(f"Ошибка автопосывки игры {chat_id}: {e}")
+        
+        if saved_games > 0:
+            logger.info(f"Автосохранение: сохранено {saved_games} игр")
+        
+        return saved_games
+        
+    except Exception as e:
+        logger.error(f"Ошибка в autosave_games: {e}")
+        return 0
+
+# ==================== ВОССТАНОВЛЕНИЕ ИЗ АВТОСЕЙВА ====================
+
+async def restore_from_autosave():
+    """Восстановление игр из автопосывки"""
+    try:
+        from modules.config import DATA_DIR
+        import os
+        import json
+        import glob
+        
+        if not os.path.exists(DATA_DIR):
+            return 0
+        
+        restored_games = 0
+        autosave_files = glob.glob(f"{DATA_DIR}/autosave_*.json")
+        
+        for filepath in autosave_files:
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    import_data = json.load(f)
+                
+                if import_game_state(import_data):
+                    restored_games += 1
+                    # Архивируем восстановленный файл
+                    archive_path = filepath.replace("autosave_", "restored_")
+                    os.rename(filepath, archive_path)
+                    
+            except Exception as e:
+                logger.error(f"Ошибка восстановления из {filepath}: {e}")
+        
+        if restored_games > 0:
+            logger.info(f"Восстановлено {restored_games} игр из автопосывки")
+        
+        return restored_games
+        
+    except Exception as e:
+        logger.error(f"Ошибка в restore_from_autosave: {e}")
+        return 0
+
+# ==================== ТЕСТОВЫЕ ФУНКЦИИ ====================
+
+async def create_test_game(chat_id: int, player_count: int = 4) -> bool:
+    """Создать тестовую игру (для отладки)"""
+    try:
+        if chat_id in ACTIVE_GAMES:
+            return False
+        
+        # Создаем тестовую игру
+        game = MonopolyGame(chat_id, 999999999)  # Тестовый создатель
+        
+        # Добавляем тестовых игроков
+        test_players = [
+            {"id": 111111111, "name": "Тест Игрок 1", "username": "test1"},
+            {"id": 222222222, "name": "Тест Игрок 2", "username": "test2"},
+            {"id": 333333333, "name": "Тест Игрок 3", "username": "test3"},
+            {"id": 444444444, "name": "Тест Игрок 4", "username": "test4"},
+        ]
+        
+        for i in range(min(player_count, 4)):
+            game.add_player(
+                test_players[i]["id"],
+                test_players[i]["name"],
+                test_players[i]["username"]
+            )
+        
+        # Покупаем несколько свойств для теста
+        test_player = game.players[0]
+        test_properties = [1, 3, 6, 8, 9]  # Коричневые и голубые
+        
+        for prop_id in test_properties:
+            if prop_id in BOARD:
+                game.buy_property(test_player, prop_id)
+        
+        # Строим дома на первой улице
+        if 1 in test_player.properties:
+            game.build_house(test_player, 1)
+            game.build_house(test_player, 1)
+        
+        # Добавляем игру
+        ACTIVE_GAMES[chat_id] = game
+        
+        logger.info(f"Создана тестовая игра в чате {chat_id} с {player_count} игроками")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Ошибка создания тестовой игры: {e}")
+        return False
+
+# ==================== ПРОВЕРКА ДОСТУПА ====================
+
+def check_game_access(chat_id: int, user_id: int) -> Dict:
+    """Проверка доступа к игре"""
+    try:
+        result = {
+            "has_access": False,
+            "is_player": False,
+            "is_current_player": False,
+            "game_exists": False,
+            "message": ""
+        }
+        
+        if chat_id not in ACTIVE_GAMES:
+            result["message"] = "Игра не найдена"
+            return result
+        
+        result["game_exists"] = True
+        game = ACTIVE_GAMES[chat_id]
+        
+        # Проверяем, является ли пользователь игроком
+        player = game.get_player_by_id(user_id)
+        if player:
+            result["is_player"] = True
+            result["has_access"] = True
+            
+            # Проверяем, его ли сейчас ход
+            current_player = game.get_current_player()
+            if current_player and current_player.id == user_id:
+                result["is_current_player"] = True
+        
+        # Админы всегда имеют доступ
+        if user_id in ADMINS:
+            result["has_access"] = True
+            result["message"] = "Доступ как администратор"
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Ошибка в check_game_access: {e}")
+        return {"has_access": False, "message": f"Ошибка: {e}"}
+
+# ==================== СОЗДАНИЕ ССЫЛКИ НА ИГРУ ====================
+
+def create_game_link(chat_id: int) -> str:
+    """Создать ссылку для присоединения к игре"""
+    try:
+        from modules.config import API_TOKEN
+        
+        # Базовая ссылка на бота
+        base_url = f"https://t.me/MonopolyPremiumBot?start=game_{chat_id}"
+        
+        # Альтернативная ссылка для веб-приложения
+        web_url = f"https://t.me/MonopolyPremiumBot/monopoly?startapp=game_{chat_id}"
+        
+        return {
+            "bot_link": base_url,
+            "webapp_link": web_url,
+            "chat_id": chat_id
+        }
+        
+    except Exception as e:
+        logger.error(f"Ошибка создания ссылки: {e}")
+        return {"error": str(e)}
+
+# ==================== ЗАВЕРШЕНИЕ ====================
+
+def cleanup_game(chat_id: int):
+    """Очистка данных игры"""
+    try:
+        if chat_id in ACTIVE_GAMES:
+            del ACTIVE_GAMES[chat_id]
+        
+        if chat_id in WAITING_GAMES:
+            game = WAITING_GAMES[chat_id]
+            if game.get("timer_task"):
+                game["timer_task"].cancel()
+            del WAITING_GAMES[chat_id]
+        
+        # Очищаем скрытые меню для этого чата
+        for user_id in list(HIDDEN_MENU_USERS.keys()):
+            if HIDDEN_MENU_USERS[user_id] == chat_id:
+                del HIDDEN_MENU_USERS[user_id]
+        
+        logger.info(f"Игра в чате {chat_id} полностью очищена")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Ошибка очистки игры: {e}")
+        return False
