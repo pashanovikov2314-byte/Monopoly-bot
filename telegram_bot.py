@@ -1,18 +1,19 @@
 """
 Monopoly Premium Bot - Telegram бот (Часть 1)
 👑 Создано Темным Принцем (Dark Prince) 👑
-Исправленный код без WebApp ошибок
+Исправленный код с таймерами, закреплением и исправленными кнопками
 """
 
 import os
 import asyncio
 import logging
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from aiogram.types import ReplyKeyboardRemove
+from aiogram.exceptions import TelegramBadRequest
 
 # ==================== НАСТРОЙКИ ====================
 API_TOKEN = os.environ.get("BOT_TOKEN")
@@ -37,7 +38,7 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 # Глобальные переменные
-WAITING_GAMES = {}
+WAITING_GAMES = {}  # {chat_id: {data, timer_task, pinned_message_id}}
 ACTIVE_GAMES = {}
 HIDDEN_MENU_USERS = {}  # {user_id: chat_id} - кто скрыл меню
 STATS = {"maintenance_mode": False}
@@ -83,14 +84,20 @@ def main_menu_kb(is_group=False):
     kb.adjust(1)
     return kb.as_markup()
 
-def waiting_room_kb(chat_id, is_creator=False):
-    """Лобби ожидания"""
+def waiting_room_kb(chat_id, creator_id, user_id):
+    """Лобби ожидания - ВСЕГДА показываем кнопки, создатель видит дополнительную"""
     kb = InlineKeyboardBuilder()
     kb.button(text="✅ Присоединиться", callback_data=f"join_game_{chat_id}")
     kb.button(text="🚪 Выйти", callback_data=f"leave_game_{chat_id}")
-    if is_creator:
+    
+    # Проверяем, является ли пользователь создателем
+    if user_id == creator_id:
         kb.button(text="▶️ Начать игру", callback_data=f"start_real_game_{chat_id}")
-    kb.adjust(2, 1)
+        kb.button(text="❌ Отменить сбор", callback_data=f"cancel_gathering_{chat_id}")
+        kb.adjust(2, 2)
+    else:
+        kb.adjust(2)
+    
     return kb.as_markup()
 
 def game_main_kb():
@@ -114,6 +121,126 @@ def inline_menu_kb():
     kb.button(text="📱 Вернуть меню", callback_data="restore_menu")
     kb.adjust(2, 2, 1)
     return kb.as_markup()
+
+# ==================== ФУНКЦИИ ДЛЯ ТАЙМЕРОВ ====================
+async def start_waiting_timer(chat_id, game_data):
+    """Запустить таймер ожидания на 3 минуты"""
+    async def check_timer():
+        await asyncio.sleep(180)  # 3 минуты
+        
+        if chat_id not in WAITING_GAMES:
+            return
+            
+        game = WAITING_GAMES[chat_id]
+        if not game:
+            return
+            
+        player_count = len(game.get("players", []))
+        
+        # Если 2 или больше игроков - начинаем игру автоматически
+        if player_count >= 2:
+            await auto_start_game(chat_id, game)
+        else:
+            # Если меньше 2 игроков - отменяем сбор
+            await cancel_gathering_by_timer(chat_id, game)
+    
+    # Запускаем таймер
+    timer_task = asyncio.create_task(check_timer())
+    game_data["timer_task"] = timer_task
+
+async def auto_start_game(chat_id, game):
+    """Автоматически начать игру после таймера"""
+    try:
+        # Переносим игру в активные
+        ACTIVE_GAMES[chat_id] = {
+            "players": game["players"],
+            "current_player": 0,
+            "started_at": datetime.now(),
+            "creator_id": game["creator_id"],
+            "properties": {},
+            "turn": 1
+        }
+        
+        # Инициализируем игроков
+        for player in ACTIVE_GAMES[chat_id]["players"]:
+            player["balance"] = 1500
+            player["position"] = 0
+            player["properties"] = []
+            player["in_jail"] = False
+        
+        # Удаляем из ожидающих
+        if chat_id in WAITING_GAMES:
+            game_data = WAITING_GAMES.pop(chat_id)
+            # Отменяем таймер
+            if "timer_task" in game_data:
+                game_data["timer_task"].cancel()
+        
+        # Открепляем сообщение о сборе
+        if "pinned_message_id" in game:
+            try:
+                await bot.unpin_chat_message(chat_id=chat_id, message_id=game["pinned_message_id"])
+            except:
+                pass
+        
+        # Формируем список игроков
+        players_list = "\n".join([f"• {p['name']}" for p in ACTIVE_GAMES[chat_id]["players"]])
+        
+        # Отправляем сообщение о начале игры
+        await bot.send_message(
+            chat_id=chat_id,
+            text=f"🎉 <b>Игра началась автоматически!</b>\n\n"
+                 f"<b>Участники:</b>\n{players_list}\n\n"
+                 f"⏰ <i>3 минуты ожидания истекли</i>\n"
+                 f"💰 Стартовый баланс: <b>1500$</b>\n"
+                 f"🎲 Первым ходит: <b>{ACTIVE_GAMES[chat_id]['players'][0]['name']}</b>\n"
+                 f"🔄 Ход: <b>1</b>",
+            parse_mode="HTML"
+        )
+        
+        # Отправляем игровое меню
+        first_player = ACTIVE_GAMES[chat_id]["players"][0]
+        await bot.send_message(
+            chat_id=chat_id,
+            text=f"🎮 <b>Игра началась!</b>\n\n"
+                 f"📢 <b>{first_player['name']}</b>, ваш ход первый!\n"
+                 f"Нажмите '🎲 Бросить кубик' чтобы сделать ход",
+            parse_mode="HTML",
+            reply_markup=game_main_kb()
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка в auto_start_game: {e}")
+
+async def cancel_gathering_by_timer(chat_id, game):
+    """Отменить сбор по истечении таймера"""
+    try:
+        if chat_id in WAITING_GAMES:
+            game_data = WAITING_GAMES.pop(chat_id)
+            
+            # Отменяем таймер
+            if "timer_task" in game_data:
+                game_data["timer_task"].cancel()
+            
+            # Открепляем сообщение
+            if "pinned_message_id" in game_data:
+                try:
+                    await bot.unpin_chat_message(chat_id=chat_id, message_id=game_data["pinned_message_id"])
+                except:
+                    pass
+            
+            # Отправляем сообщение об отмене
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ <b>Сбор игроков отменен!</b>\n\n"
+                     f"⏰ <i>3 минуты ожидания истекли</i>\n"
+                     f"👥 <b>Не удалось собрать достаточное количество игроков</b>\n"
+                     f"Минимум требуется: 2 игрока\n"
+                     f"Собрано: {len(game.get('players', []))} игрока(ов)",
+                parse_mode="HTML"
+            )
+            
+    except Exception as e:
+        logger.error(f"Ошибка в cancel_gathering_by_timer: {e}")
 
 # ==================== КОМАНДЫ ====================
 @dp.message(Command("start"))
@@ -149,8 +276,18 @@ async def cmd_start(message: types.Message):
 
 @dp.message(Command("monopoly"))
 async def cmd_monopoly(message: types.Message):
-    """Главная команда - РАЗНЫЕ меню для групп и ЛС"""
+    """Главная команда - ТОЛЬКО в группах"""
     try:
+        # Проверяем тип чата - отвечаем ТОЛЬКО в группах
+        if message.chat.type not in ["group", "supergroup"]:
+            await message.answer(
+                "👋 <b>Эту команду можно использовать только в группах!</b>\n\n"
+                f"Добавьте бота в группу и используйте /monopoly там.\n"
+                f"Разработчик: {DEV_TAG}",
+                parse_mode="HTML"
+            )
+            return
+        
         if STATS.get("maintenance_mode", False):
             await message.answer(
                 f"⚠️ {MAINTENANCE_MSG}\n\n"
@@ -159,9 +296,6 @@ async def cmd_monopoly(message: types.Message):
             )
             return
         
-        # Определяем тип чата
-        is_group = message.chat.type in ["group", "supergroup"]
-        
         # Проверяем, скрыл ли пользователь меню
         user_id = message.from_user.id
         if user_id in HIDDEN_MENU_USERS:
@@ -169,19 +303,13 @@ async def cmd_monopoly(message: types.Message):
             await show_inline_menu(message)
             return
         
-        # Разные приветствия
-        if is_group:
-            header = f"{BANNER}\n\n🎲 <b>Monopoly Premium Edition</b>\n👑 Версия Темного Принца\n\n"
-            header += "🎮 <b>Доступные действия:</b>"
-        else:
-            header = f"{BANNER}\n\n🎲 <b>Monopoly Premium Edition</b>\n👑 Версия Темного Принца\n\n"
-            header += "👋 <b>Добро пожаловать!</b>\n\n"
-            header += "Чтобы начать игру, добавьте бота в группу и используйте /monopoly там"
+        header = f"{BANNER}\n\n🎲 <b>Monopoly Premium Edition</b>\n👑 Версия Темного Принца\n\n"
+        header += "🎮 <b>Доступные действия:</b>"
         
         await message.answer(
             header,
             parse_mode="HTML",
-            reply_markup=main_menu_kb(is_group=is_group)
+            reply_markup=main_menu_kb(is_group=True)
         )
     except Exception as e:
         logger.error(f"Ошибка в cmd_monopoly: {e}")
@@ -517,6 +645,40 @@ async def start_gathering(c: types.CallbackQuery):
             await c.answer("⚠️ В этой группе уже идет сбор игроков!", show_alert=True)
             return
         
+        # Создаем сообщение о сборе
+        players_text = "👥 <b>Игроки в ожидании:</b>\n"
+        players_text += f"• {c.from_user.first_name}"
+        if c.from_user.username:
+            players_text += f" (@{c.from_user.username})"
+        players_text += "\n"
+        
+        message_text = (
+            f"🎮 <b>Сбор игроков начат!</b>\n"
+            f"Создатель: {c.from_user.first_name}\n"
+            f"⏳ Таймер: <b>3:00</b> (автозапуск/отмена)\n\n"
+            f"{players_text}\n"
+            f"✅ Нажмите 'Присоединиться' чтобы войти в игру\n"
+            f"🚪 'Выйти из игры' - чтобы покинуть лобби\n"
+            f"▶️ Создатель может начать игру досрочно\n"
+            f"❌ Создатель может отменить сбор\n\n"
+            f"<i>Автоматически начнется через 3 минуты если наберется 2+ игроков</i>"
+        )
+        
+        # Отправляем сообщение
+        sent_message = await bot.send_message(
+            chat_id=chat_id,
+            text=message_text,
+            parse_mode="HTML",
+            reply_markup=waiting_room_kb(chat_id, user_id, user_id)
+        )
+        
+        # Закрепляем сообщение
+        try:
+            await sent_message.pin()
+        except Exception as pin_error:
+            logger.warning(f"Не удалось закрепить сообщение: {pin_error}")
+        
+        # Сохраняем данные
         WAITING_GAMES[chat_id] = {
             "creator_id": user_id,
             "creator_name": c.from_user.first_name,
@@ -527,29 +689,16 @@ async def start_gathering(c: types.CallbackQuery):
                 "position": 0,
                 "balance": 1500
             }],
-            "message_id": c.message.message_id,
-            "created_at": datetime.now().isoformat()
+            "message_id": sent_message.message_id,
+            "pinned_message_id": sent_message.message_id,
+            "created_at": datetime.now().isoformat(),
+            "timer_task": None
         }
         
-        players_text = "👥 <b>Игроки в ожидании:</b>\n"
-        for player in WAITING_GAMES[chat_id]["players"]:
-            players_text += f"• {player['name']}"
-            if player.get('username'):
-                players_text += f" (@{player['username']})"
-            players_text += "\n"
+        # Запускаем таймер
+        await start_waiting_timer(chat_id, WAITING_GAMES[chat_id])
         
-        await c.message.edit_text(
-            f"🎮 <b>Сбор игроков начат!</b>\n"
-            f"Создатель: {c.from_user.first_name}\n\n"
-            f"{players_text}\n"
-            f"✅ Нажмите 'Присоединиться' чтобы войти в игру\n"
-            f"🚪 'Выйти из игры' - чтобы покинуть лобби\n"
-            f"▶️ Создатель может начать игру когда все готовы",
-            parse_mode="HTML",
-            reply_markup=waiting_room_kb(chat_id, is_creator=True)
-        )
-        
-        await c.answer("🎮 Сбор игроков начат!")
+        await c.answer("🎮 Сбор игроков начат! Сообщение закреплено.")
         
     except Exception as e:
         logger.error(f"Ошибка в start_gathering: {e}")
@@ -591,17 +740,30 @@ async def join_game(c: types.CallbackQuery):
                 players_text += f" (@{player['username']})"
             players_text += "\n"
         
-        is_creator = (user_id == game["creator_id"])
+        # Считаем время до конца
+        created_at = datetime.fromisoformat(game["created_at"])
+        time_passed = datetime.now() - created_at
+        time_left = max(0, 180 - time_passed.seconds)  # 3 минуты = 180 секунд
+        minutes_left = time_left // 60
+        seconds_left = time_left % 60
         
-        await c.message.edit_text(
+        message_text = (
             f"🎮 <b>Сбор игроков начат!</b>\n"
-            f"Создатель: {game['creator_name']}\n\n"
+            f"Создатель: {game['creator_name']}\n"
+            f"⏳ Таймер: <b>{minutes_left}:{seconds_left:02d}</b> (автозапуск/отмена)\n\n"
             f"{players_text}\n"
             f"✅ Нажмите 'Присоединиться' чтобы войти в игру\n"
             f"🚪 'Выйти из игры' - чтобы покинуть лобби\n"
-            f"▶️ Создатель может начать игру когда все готовы",
+            f"▶️ Создатель может начать игру досрочно\n"
+            f"❌ Создатель может отменить сбор\n\n"
+            f"<i>Автоматически начнется через {minutes_left}:{seconds_left:02d} если наберется 2+ игроков</i>"
+        )
+        
+        # Обновляем сообщение с клавиатурой создателя
+        await c.message.edit_text(
+            message_text,
             parse_mode="HTML",
-            reply_markup=waiting_room_kb(chat_id, is_creator=is_creator)
+            reply_markup=waiting_room_kb(chat_id, game["creator_id"], c.from_user.id)
         )
         
         await c.answer(f"🎮 Вы присоединились! Игроков: {len(game['players'])}")
@@ -629,6 +791,17 @@ async def leave_game(c: types.CallbackQuery):
         
         # Если игроков не осталось
         if not game["players"]:
+            # Отменяем таймер
+            if "timer_task" in game:
+                game["timer_task"].cancel()
+            
+            # Открепляем сообщение
+            if "pinned_message_id" in game:
+                try:
+                    await bot.unpin_chat_message(chat_id=chat_id, message_id=game["pinned_message_id"])
+                except:
+                    pass
+            
             del WAITING_GAMES[chat_id]
             await c.message.edit_text("❌ Игра отменена - все игроки вышли")
             await c.answer("Игра отменена")
@@ -648,17 +821,30 @@ async def leave_game(c: types.CallbackQuery):
                 players_text += f" (@{player['username']})"
             players_text += "\n"
         
-        is_creator = (c.from_user.id == game["creator_id"])
+        # Считаем время до конца
+        created_at = datetime.fromisoformat(game["created_at"])
+        time_passed = datetime.now() - created_at
+        time_left = max(0, 180 - time_passed.seconds)
+        minutes_left = time_left // 60
+        seconds_left = time_left % 60
         
-        await c.message.edit_text(
+        message_text = (
             f"🎮 <b>Сбор игроков начат!</b>\n"
-            f"Создатель: {game['creator_name']}\n\n"
+            f"Создатель: {game['creator_name']}\n"
+            f"⏳ Таймер: <b>{minutes_left}:{seconds_left:02d}</b> (автозапуск/отмена)\n\n"
             f"{players_text}\n"
             f"✅ Нажмите 'Присоединиться' чтобы войти в игру\n"
             f"🚪 'Выйти из игры' - чтобы покинуть лобби\n"
-            f"▶️ Создатель может начать игру когда все готовы",
+            f"▶️ Создатель может начать игру досрочно\n"
+            f"❌ Создатель может отменить сбор\n\n"
+            f"<i>Автоматически начнется через {minutes_left}:{seconds_left:02d} если наберется 2+ игроков</i>"
+        )
+        
+        # Обновляем клавиатуру
+        await c.message.edit_text(
+            message_text,
             parse_mode="HTML",
-            reply_markup=waiting_room_kb(chat_id, is_creator=is_creator)
+            reply_markup=waiting_room_kb(chat_id, game["creator_id"], c.from_user.id)
         )
         
         await c.answer(f"🚪 Вы вышли. Игроков: {len(game['players'])}")
@@ -667,9 +853,53 @@ async def leave_game(c: types.CallbackQuery):
         logger.error(f"Ошибка в leave_game: {e}")
         await c.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
 
+@dp.callback_query(F.data.startswith("cancel_gathering_"))
+async def cancel_gathering(c: types.CallbackQuery):
+    """Отменить сбор игроков"""
+    try:
+        chat_id = int(c.data.split("_")[2])
+        
+        if chat_id not in WAITING_GAMES:
+            await c.answer("⚠️ Игра не найдена", show_alert=True)
+            return
+        
+        game = WAITING_GAMES[chat_id]
+        
+        # Проверяем права создателя
+        if c.from_user.id != game["creator_id"]:
+            await c.answer("⚠️ Только создатель игры может отменить сбор!", show_alert=True)
+            return
+        
+        # Отменяем таймер
+        if "timer_task" in game:
+            game["timer_task"].cancel()
+        
+        # Открепляем сообщение
+        if "pinned_message_id" in game:
+            try:
+                await bot.unpin_chat_message(chat_id=chat_id, message_id=game["pinned_message_id"])
+            except:
+                pass
+        
+        # Удаляем игру
+        del WAITING_GAMES[chat_id]
+        
+        # Обновляем сообщение
+        await c.message.edit_text(
+            "❌ <b>Сбор игроков отменен создателем!</b>\n\n"
+            "👑 <i>Темный Принц сожалеет об этом...</i>",
+            parse_mode="HTML"
+        )
+        
+        await c.answer("❌ Сбор игроков отменен")
+        
+    except Exception as e:
+        logger.error(f"Ошибка в cancel_gathering: {e}")
+        await c.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
+
 @dp.callback_query(F.data.startswith("start_real_game_"))
 async def start_real_game(c: types.CallbackQuery):
-    """Начать игру"""
+    """Начать игру досрочно"""
     try:
         chat_id = int(c.data.split("_")[3])
         
@@ -688,6 +918,17 @@ async def start_real_game(c: types.CallbackQuery):
         if len(game["players"]) < 2:
             await c.answer("⚠️ Нужно минимум 2 игрока для начала игры!", show_alert=True)
             return
+        
+        # Отменяем таймер
+        if "timer_task" in game:
+            game["timer_task"].cancel()
+        
+        # Открепляем сообщение
+        if "pinned_message_id" in game:
+            try:
+                await bot.unpin_chat_message(chat_id=chat_id, message_id=game["pinned_message_id"])
+            except:
+                pass
         
         # Переносим игру в активные
         ACTIVE_GAMES[chat_id] = {
@@ -714,12 +955,12 @@ async def start_real_game(c: types.CallbackQuery):
         
         # Отправляем сообщение о начале игры
         await c.message.edit_text(
-            f"🎉 <b>Игра началась!</b>\n\n"
+            f"🎉 <b>Игра началась!</b>\n"
+            f"👑 <i>Создатель запустил игру досрочно</i>\n\n"
             f"<b>Участники:</b>\n{players_list}\n\n"
             f"💰 Стартовый баланс: <b>1500$</b>\n"
             f"🎲 Первым ходит: <b>{ACTIVE_GAMES[chat_id]['players'][0]['name']}</b>\n"
-            f"🔄 Ход: <b>1</b>\n\n"
-            f"<i>Используйте меню ниже для управления игрой</i>",
+            f"🔄 Ход: <b>1</b>",
             parse_mode="HTML"
         )
         
@@ -826,20 +1067,6 @@ async def build_button(message: types.Message):
         
         if not player:
             await message.answer("⚠️ Вы не участвуете в этой игре!")
-            return
-        
-        # Находим недвижимость игрока
-        player_properties = []
-        for prop_id, prop_info in game.get("properties", {}).items():
-            if prop_info.get("owner") == user_id and prop_id in BOARD:
-                player_properties.append(prop_id)
-        
-        if not player_properties:
-            await message.answer(
-                "❌ <b>У вас нет недвижимости для строительства!</b>\n\n"
-                "Сначала купите недвижимость, бросая кубик.",
-                parse_mode="HTML"
-            )
             return
         
         await message.answer(
@@ -1017,7 +1244,7 @@ async def back_to_main(c: types.CallbackQuery):
 
 # ==================== ЗАПУСК БОТА ====================
 async def start_bot():
-    """Асинхронный запуск бота"""
+    """Асинхронный запуск бота с обработкой ошибок"""
     try:
         logger.info("🚀 Telegram бот запускается...")
         logger.info("👑 Темный Принц активирован")
@@ -1025,11 +1252,25 @@ async def start_bot():
         # Удаляем вебхук
         await bot.delete_webhook(drop_pending_updates=True)
         
-        # Запускаем поллинг
-        await dp.start_polling(bot)
-        
+        # Запускаем поллинг с переподключением
+        while True:
+            try:
+                logger.info("🔄 Запуск поллинга...")
+                await dp.start_polling(bot, 
+                                      allowed_updates=dp.resolve_used_update_types(),
+                                      handle_signals=False)  # Отключаем обработку сигналов
+                
+            except KeyboardInterrupt:
+                logger.info("⏹️ Бот остановлен пользователем")
+                break
+            except Exception as e:
+                logger.error(f"❌ Критическая ошибка в поллинге: {e}")
+                logger.info("🔄 Перезапуск через 5 секунд...")
+                await asyncio.sleep(5)
+                continue
+                
     except Exception as e:
-        logger.error(f"❌ Ошибка при запуске бота: {e}")
+        logger.error(f"❌ Фатальная ошибка: {e}")
         raise
 
 def main():
@@ -1044,4 +1285,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
