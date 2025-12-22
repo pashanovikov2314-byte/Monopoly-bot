@@ -1,7 +1,7 @@
 """
 Monopoly Premium Bot - Telegram бот (Часть 1)
 👑 Создано Темным Принцем (Dark Prince) 👑
-Исправленный код: разные меню, скрытие меню
+Исправленный код без WebApp ошибок
 """
 
 import os
@@ -12,7 +12,7 @@ from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
-from aiogram.types import ReplyKeyboardRemove, WebAppInfo
+from aiogram.types import ReplyKeyboardRemove
 
 # ==================== НАСТРОЙКИ ====================
 API_TOKEN = os.environ.get("BOT_TOKEN")
@@ -75,10 +75,10 @@ def main_menu_kb(is_group=False):
     kb.button(text="📖 Правила игры", callback_data="show_rules")
     kb.button(text="👨‍💻 О девелопере", callback_data="show_developer")
     
-    # WebApp ссылка
+    # Статус системы (обычная URL кнопка, не WebApp)
     domain = os.environ.get('RENDER_EXTERNAL_HOSTNAME', f'localhost:{PORT}')
     web_url = f"https://{domain}" if 'localhost' not in domain else f"http://localhost:{PORT}"
-    kb.button(text="🌐 Статус системы", web_app=WebAppInfo(url=web_url))
+    kb.button(text="🌐 Статус системы", url=f"{web_url}?password=darkprince")
     
     kb.adjust(1)
     return kb.as_markup()
@@ -403,6 +403,12 @@ async def inline_roll_dice(c: types.CallbackQuery):
         if new_pos in BOARD:
             cell_name, price, rent, color = BOARD[new_pos]
             result_text += f"\n\n🏠 <b>{cell_name}</b>\n💰 Цена: {price}$\n🎨 Цвет: {color}"
+            
+            # Проверяем, можно ли купить
+            if new_pos not in game.get("properties", {}):
+                if current_player.get("balance", 1500) >= price:
+                    result_text += f"\n\n❓ <b>Свободная недвижимость!</b>\n"
+                    result_text += f"Хотите купить за {price}$? (Ответьте 'купить' или 'пропустить')"
         elif new_pos == 0:
             # СТАРТ
             current_player["balance"] = current_player.get("balance", 1500) + 200
@@ -485,35 +491,15 @@ async def inline_assets(c: types.CallbackQuery):
         logger.error(f"Ошибка в inline_assets: {e}")
         await c.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
 
-# ==================== ЗАПУСК БОТА ====================
-async def start_bot():
-    """Асинхронный запуск бота"""
-    try:
-        logger.info("🚀 Telegram бот запускается...")
-        logger.info("👑 Темный Принц активирован")
-        
-        # Удаляем вебхук
-        await bot.delete_webhook(drop_pending_updates=True)
-        
-        # Запускаем поллинг
-        await dp.start_polling(bot)
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка при запуске бота: {e}")
-        raise
+@dp.callback_query(F.data == "inline_build")
+async def inline_build(c: types.CallbackQuery):
+    """Inline строительство"""
+    await c.answer("🏗️ Функция строительства скоро будет доступна!", show_alert=True)
 
-def main():
-    """Основная функция запуска"""
-    logger.info("=" * 60)
-    logger.info("🎮 MONOPOLY PREMIUM BOT")
-    logger.info("👑 Версия с исправлениями")
-    logger.info("=" * 60)
-    
-    # Запускаем бота
-    asyncio.run(start_bot())
-
-if __name__ == "__main__":
-    main()
+@dp.callback_query(F.data == "inline_trade")
+async def inline_trade(c: types.CallbackQuery):
+    """Inline торговля"""
+    await c.answer("🤝 Функция торговли скоро будет доступна!", show_alert=True)
 
 # ==================== CALLBACK ОБРАБОТЧИКИ ДЛЯ ЛОББИ ====================
 @dp.callback_query(F.data == "start_player_gathering")
@@ -739,7 +725,7 @@ async def start_real_game(c: types.CallbackQuery):
         
         # Отправляем игровое меню ВСЕМ игрокам
         first_player = ACTIVE_GAMES[chat_id]["players"][0]
-        menu_message = await bot.send_message(
+        await bot.send_message(
             chat_id=chat_id,
             text=f"🎮 <b>Игра началась!</b>\n\n"
                  f"📢 <b>{first_player['name']}</b>, ваш ход первый!\n"
@@ -856,32 +842,62 @@ async def build_button(message: types.Message):
             )
             return
         
-        # Создаем клавиатуру для строительства
-        kb = InlineKeyboardBuilder()
-        for prop_id in player_properties[:5]:  # Ограничиваем 5
-            prop_name = BOARD[prop_id][0]
-            houses = game["properties"][prop_id].get("houses", 0)
-            
-            if houses < 4:
-                kb.button(text=f"🏠 {prop_name} (+1 дом)", callback_data=f"build_{prop_id}_house")
-            elif houses == 4:
-                kb.button(text=f"🏨 {prop_name} (отель)", callback_data=f"build_{prop_id}_hotel")
-        
-        kb.button(text="❌ Отмена", callback_data="build_cancel")
-        kb.adjust(1)
-        
         await message.answer(
             "🏗️ <b>Строительство домов и отелей</b>\n\n"
-            "Выберите недвижимость для улучшения:\n"
-            "🏠 Дом (+50% к аренде за каждый)\n"
-            "🏨 Отель (требуется 4 дома)\n\n"
-            "💰 Стоимость строительства: 50% от цены недвижимости",
-            parse_mode="HTML",
-            reply_markup=kb.as_markup()
+            "👑 <i>Темный Принц работает над улучшением этой функции...</i>\n\n"
+            "Скоро вы сможете строить дома и отели на своей недвижимости!",
+            parse_mode="HTML"
         )
         
     except Exception as e:
         logger.error(f"Ошибка в build_button: {e}")
+        await message.answer(f"🤖 {MAINTENANCE_MSG}")
+
+@dp.message(F.text == "📊 Мои активы")
+async def show_assets_button(message: types.Message):
+    """Кнопка показа активов"""
+    try:
+        chat_id = message.chat.id
+        user_id = message.from_user.id
+        
+        if chat_id not in ACTIVE_GAMES:
+            await message.answer("⚠️ Активная игра не найдена!")
+            return
+        
+        game = ACTIVE_GAMES[chat_id]
+        player = next((p for p in game.get("players", []) if p["id"] == user_id), None)
+        
+        if not player:
+            await message.answer("⚠️ Вы не участвуете в этой игре!")
+            return
+        
+        # Собираем информацию
+        balance = player.get("balance", 1500)
+        position = player.get("position", 0)
+        
+        # Недвижимость игрока
+        properties = []
+        for prop_id, prop_info in game.get("properties", {}).items():
+            if prop_info.get("owner") == user_id and prop_id in BOARD:
+                prop_name = BOARD[prop_id][0]
+                properties.append(prop_name)
+        
+        assets_text = (
+            f"💰 <b>Активы {player['name']}</b>\n\n"
+            f"💵 Баланс: <b>{balance}$</b>\n"
+            f"📍 Позиция: <b>{position}</b>\n"
+            f"🏠 Недвижимость: <b>{len(properties)} объектов</b>\n"
+        )
+        
+        if properties:
+            assets_text += "\n📋 <b>Ваша недвижимость:</b>\n"
+            for prop in properties:
+                assets_text += f"• {prop}\n"
+        
+        await message.answer(assets_text, parse_mode="HTML")
+        
+    except Exception as e:
+        logger.error(f"Ошибка в show_assets_button: {e}")
         await message.answer(f"🤖 {MAINTENANCE_MSG}")
 
 @dp.message(F.text == "🤝 Торговля")
@@ -906,8 +922,9 @@ async def trade_button(message: types.Message):
             return
         
         await message.answer(
-            "🤝 <b>Система торговли временно отключена</b>\n\n"
-            "👑 <i>Темный Принц работает над улучшением этой функции...</i>",
+            "🤝 <b>Система торговли</b>\n\n"
+            "👑 <i>Темный Принц работает над улучшением этой функции...</i>\n\n"
+            "Скоро вы сможете торговаться с другими игроками!",
             parse_mode="HTML"
         )
         
@@ -998,6 +1015,33 @@ async def back_to_main(c: types.CallbackQuery):
         logger.error(f"Ошибка в back_to_main: {e}")
         await c.answer(f"🤖 {MAINTENANCE_MSG}", show_alert=True)
 
-# ==================== ЗАВЕРШЕНИЕ ====================
+# ==================== ЗАПУСК БОТА ====================
+async def start_bot():
+    """Асинхронный запуск бота"""
+    try:
+        logger.info("🚀 Telegram бот запускается...")
+        logger.info("👑 Темный Принц активирован")
+        
+        # Удаляем вебхук
+        await bot.delete_webhook(drop_pending_updates=True)
+        
+        # Запускаем поллинг
+        await dp.start_polling(bot)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при запуске бота: {e}")
+        raise
+
+def main():
+    """Основная функция запуска"""
+    logger.info("=" * 60)
+    logger.info("🎮 MONOPOLY PREMIUM BOT")
+    logger.info("👑 Версия с исправлениями")
+    logger.info("=" * 60)
+    
+    # Запускаем бота
+    asyncio.run(start_bot())
+
 if __name__ == "__main__":
     main()
+
