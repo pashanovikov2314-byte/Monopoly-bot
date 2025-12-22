@@ -9,22 +9,26 @@ from datetime import datetime
 import json
 from typing import Dict, List, Tuple, Any
 
-# ==================== БАЗОВЫЕ НАСТРОЙКИ ====================
-API_TOKEN = os.environ.get("BOT_TOKEN")
-if not API_TOKEN:
-    logging.error("❌ BOT_TOKEN не найден! Установи переменную окружения BOT_TOKEN")
-    exit(1)
-
+# ==================== БАЗОВЫЕ НАСТРОЙКИ ====================\nAPI_TOKEN = os.environ.get("BOT_TOKEN")
 PORT = int(os.environ.get("PORT", 8083))
 DEV_TAG = "@Whylovely05"
 MAINTENANCE_MSG = "👑 Бот обновляется, Темный принц уже исправляет это ♥️"
 BANNER = "┏━━━━━━━━━━━━━━━━━━┓\n┃  Monopoly Premium  ┃\n┗━━━━━━━━━━━━━━━━━━┛"
 
-# Админы бота (Telegram ID)
-ADMINS = [123456789, 987654321]  # Добавь свой ID первым
+# Пункт 3: Белый список Юзов (кто может запускать бота)
+ALLOWED_USERS = [7131404858]  # Твой ID сюда!
 
-# Время ожидания в лобби (3 минуты)
-LOBBY_TIMEOUT = 180  # секунды
+ADMINS = [7131404858] 
+LOBBY_TIMEOUT = 180  
+
+# Пункт 4: Карточки Шанс
+CHANCE_CARDS = [
+    {"text": "🏦 Банк платит вам дивиденды: +$50", "money": 50},
+    {"text": "👮 Отправляйтесь в тюрьму без права захода на Старт!", "jail": True},
+    {"text": "🏎️ Штраф за превышение скорости: -$15", "money": -15},
+    {"text": "📉 Выгодная сделка: получите $100", "money": 100},
+    {"text": "🛠️ Капитальный ремонт: заплатите $25 за каждый дом", "house_tax": 25}
+]
 
 # Настройка логирования
 logging.basicConfig(
