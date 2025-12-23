@@ -13,6 +13,11 @@ from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardRemove, CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+# Добавьте эти 3 строки ПЕРЕД вашими импортами из modules.config:
+from modules.database import db_manager
+from modules.dice_animation import dice_animation
+from modules.access_control import access_control
+
 from modules.config import (
     logger, WAITING_GAMES, ACTIVE_GAMES, HIDDEN_MENU_USERS,
     STATS, USER_STATS, ADMINS, BANNER, MAINTENANCE_MSG,
