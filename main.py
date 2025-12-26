@@ -24,6 +24,9 @@ try:
     from handlers.callback_handlers import setup_callbacks
     from handlers.text_handlers import setup_text_handlers
     
+    # ИМПОРТ ТЕСТОВЫХ ОБРАБОТЧИКОВ
+    from test_router import setup_test_handlers
+    
     print(\"✅ Все модули импортированы успешно!\")
     
 except ImportError as e:
@@ -48,7 +51,7 @@ WAITING_GAMES = {}
 ACTIVE_GAMES = {}
 HIDDEN_MENU_USERS = {}
 STATS = {
-    \"maintenance_mode\": False,  # По умолчанию выключено (True для техработ)
+    \"maintenance_mode\": False,
     \"total_games\": 0,
     \"active_games\": 0,
     \"total_players\": 0
@@ -82,7 +85,10 @@ class MonopolyBot:
             await self.db.init_database()
             self.bot, self.dp = await setup_bot()
             
-            # Регистрация обработчиков
+            # ВАЖНО: Сначала регистрируем тестовые обработчики
+            setup_test_handlers(self.dp)
+            
+            # Затем основные обработчики
             setup_commands(self.dp, self.db, HIDDEN_MENU_USERS, STATS)
             setup_callbacks(self.dp, self.db, WAITING_GAMES, ACTIVE_GAMES, HIDDEN_MENU_USERS, STATS)
             setup_text_handlers(self.dp, self.db, ACTIVE_GAMES)
@@ -91,10 +97,10 @@ class MonopolyBot:
             await self.web_server.start(self.bot)
             
             logger.info(\"✅ Бот инициализирован\")
+            logger.info(\"📱 Тестовые команды: /test, любой текст (эхо)\")
             
             if STATS[\"maintenance_mode\"]:
                 logger.warning(\"⚠️ Бот запущен в режиме технических работ!\")
-                logger.info(\"👑 Сообщения будут содержать информацию о Темном Принце\")
             
             await self.dp.start_polling(self.bot, skip_updates=True)
             

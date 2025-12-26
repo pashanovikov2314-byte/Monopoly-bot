@@ -26,7 +26,7 @@ async def setup_bot():
         
         # Создаем диспетчер с хранилищем в памяти
         storage = MemoryStorage()
-        dp = Dispatcher(storage=storage)
+        dp = Dispatcher()
         
         logger.info('Бот и диспетчер успешно инициализированы')
         return bot, dp
@@ -34,13 +34,3 @@ async def setup_bot():
     except Exception as e:
         logger.error(f'Не удалось настроить бота: {e}')
         raise
-
-# Для тестирования
-if __name__ == '__main__':
-    import asyncio
-    try:
-        bot, dp = asyncio.run(setup_bot())
-        print(f'Бот создан: {bot}')
-        print(f'Диспетчер создан: {dp}')
-    except Exception as e:
-        print(f'Ошибка: {e}')
