@@ -96,3 +96,65 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
+# Импорт игровых обработчиков
+try:
+    from handlers.game_handlers import game_router
+    print("✅ Игровые обработчики импортированы")
+except ImportError as e:
+    print(f"⚠️ Игровые обработчики не импортированы: {e}")
+
+class MonopolyBot:
+    def __init__(self):
+        self.bot = None
+        self.dp = None
+        self.db = Database()
+        self.rate_limiter = RateLimiter()
+        self.scheduler = GameScheduler()
+        self.web_server = WebServer()
+
+    async def start(self):
+        """Запуск бота"""
+        try:
+            logger.info("🚀 Запуск Monopoly Premium Bot...")
+            logger.info("👑 Версия Темного Принца")
+            
+            # Проверяем наличие токена
+            BOT_TOKEN = os.environ.get("BOT_TOKEN")
+            if not BOT_TOKEN:
+                logger.error("❌ BOT_TOKEN не установлен!")
+                logger.info("🔧 Режим техработ включен")
+                STATS["maintenance_mode"] = True
+                # Запускаем веб-сервер для Render
+                await self.web_server.start(None)
+                return
+            
+            await self.db.init_database()
+            self.bot, self.dp = await setup_bot()
+            
+            # Регистрация ВСЕХ обработчиков
+            setup_test_handlers(self.dp)
+            setup_commands(self.dp, self.db, HIDDEN_MENU_USERS, STATS)
+            setup_callbacks(self.dp, self.db, WAITING_GAMES, ACTIVE_GAMES, HIDDEN_MENU_USERS, STATS)
+            setup_text_handlers(self.dp, self.db, ACTIVE_GAMES)
+            
+            # Регистрация игровых обработчиков
+            try:
+                self.dp.include_router(game_router)
+                logger.info("✅ Игровые обработчики зарегистрированы")
+            except:
+                logger.warning("⚠️ Не удалось зарегистрировать игровые обработчики")
+            
+            logger.info("✅ Бот инициализирован")
+            logger.info("🎮 Доступны игровые функции")
+            
+            await self.dp.start_polling(self.bot, skip_updates=True)
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка: {e}")
+            import traceback
+            traceback.print_exc()
+            STATS["maintenance_mode"] = True
+            # Бесконечный цикл для Render
+            while True:
+                await asyncio.sleep(60)
