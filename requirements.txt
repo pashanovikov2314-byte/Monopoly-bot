@@ -17,4 +17,5 @@ flask==3.0.2
 flask-cors==4.0.0
 flask-limiter==3.5.0
 flask-httpauth==4.8.0
-qrcode[pil]==7.4.2
+# qrcode[pil]==7.4.2 - УДАЛЕН, требует компилятора
+qrcode==7.4.2  # Без [pil]
