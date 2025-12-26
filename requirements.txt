@@ -3,19 +3,3 @@ aiohttp==3.9.5
 aiofiles==23.2.1
 aiosqlite==0.20.0
 python-dotenv==1.0.1
-Pillow==10.3.0
-python-multipart==0.0.9
-ujson==5.9.0
-pytz==2024.1
-APScheduler==3.10.4
-redis==5.0.1
-cryptography==42.0.5
-pyjwt==2.8.0
-jsonschema==4.20.0
-gunicorn==21.2.0
-flask==3.0.2
-flask-cors==4.0.0
-flask-limiter==3.5.0
-flask-httpauth==4.8.0
-# qrcode[pil]==7.4.2 - УДАЛЕН, требует компилятора
-qrcode==7.4.2  # Без [pil]
