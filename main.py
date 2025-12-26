@@ -1,127 +1,98 @@
-﻿import asyncio
+﻿#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Monopoly Premium Bot - Основной файл"""
+
+import asyncio
 import logging
 import sys
-from datetime import datetime
 import os
 
-# === КРИТИЧЕСКИ ВАЖНО ДЛЯ RENDER ===
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-# =====================================
+# Добавляем текущую папку в путь Python
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
 
-print(\"=== ЗАПУСК MONOPOLY BOT ===\")
-print(f\"Python путь: {sys.path[:2]}\")
-print(f\"Текущая папка: {os.getcwd()}\")
+print("=== ЗАПУСК MONOPOLY BOT ===")
+print("Python путь:", sys.path[:2])
+print("Текущая папка:", current_dir)
 
 try:
+    # Импортируем основные модули
     from core.bot import setup_bot
     from core.database import Database
-    from core.security import RateLimiter
-    from core.web_server import WebServer
-    from utils.scheduler import GameScheduler
+    print("✅ Основные модули импортированы")
+    
+    # Импортируем обработчики
     from handlers.commands import setup_commands
     from handlers.callback_handlers import setup_callbacks
     from handlers.text_handlers import setup_text_handlers
-    
-    # ИМПОРТ ТЕСТОВЫХ ОБРАБОТЧИКОВ
     from test_router import setup_test_handlers
     
-    print(\"✅ Все модули импортированы успешно!\")
+    print("✅ Обработчики импортированы")
     
 except ImportError as e:
-    print(f\"❌ Ошибка импорта: {e}\")
-    print(\"Содержимое текущей папки:\", os.listdir('.'))
-    if os.path.exists('core'):
-        print(\"Содержимое папки core:\", os.listdir('core'))
+    print(f"❌ Ошибка импорта: {e}")
+    import traceback
+    traceback.print_exc()
     sys.exit(1)
 
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
 
-# Глобальные переменные
-WAITING_GAMES = {}
-ACTIVE_GAMES = {}
-HIDDEN_MENU_USERS = {}
-STATS = {
-    \"maintenance_mode\": False,
-    \"total_games\": 0,
-    \"active_games\": 0,
-    \"total_players\": 0
-}
-
-class MonopolyBot:
-    def __init__(self):
-        self.bot = None
-        self.dp = None
-        self.db = Database()
-        self.rate_limiter = RateLimiter()
-        self.scheduler = GameScheduler()
-        self.web_server = WebServer()
-
-    async def start(self):
-        \"\"\"Запуск бота\"\"\"
-        try:
-            logger.info(\"🚀 Запуск Monopoly Premium Bot...\")
-            logger.info(\"👑 Версия Темного Принца\")
-            
-            # Проверяем наличие токена
-            BOT_TOKEN = os.environ.get('BOT_TOKEN')
-            if not BOT_TOKEN:
-                logger.error(\"❌ BOT_TOKEN не установлен! Добавьте его в Environment Variables Render\")
-                logger.info(\"🔧 Режим техработ включен из-за отсутствия токена\")
-                STATS[\"maintenance_mode\"] = True
-                # Запускаем веб-сервер для Render даже без токена
-                await self.web_server.start(None)
-                return
-            
-            await self.db.init_database()
-            self.bot, self.dp = await setup_bot()
-            
-            # ВАЖНО: Сначала регистрируем тестовые обработчики
-            setup_test_handlers(self.dp)
-            
-            # Затем основные обработчики
-            setup_commands(self.dp, self.db, HIDDEN_MENU_USERS, STATS)
-            setup_callbacks(self.dp, self.db, WAITING_GAMES, ACTIVE_GAMES, HIDDEN_MENU_USERS, STATS)
-            setup_text_handlers(self.dp, self.db, ACTIVE_GAMES)
-            
-            # Запуск веб-сервера
-            await self.web_server.start(self.bot)
-            
-            logger.info(\"✅ Бот инициализирован\")
-            logger.info(\"📱 Тестовые команды: /test, любой текст (эхо)\")
-            
-            if STATS[\"maintenance_mode\"]:
-                logger.warning(\"⚠️ Бот запущен в режиме технических работ!\")
-            
-            await self.dp.start_polling(self.bot, skip_updates=True)
-            
-        except Exception as e:
-            logger.error(f\"❌ Ошибка: {e}\")
-            STATS[\"maintenance_mode\"] = True
-            raise
-
 async def main():
-    \"\"\"Основная функция\"\"\"
-    os.makedirs(\"logs\", exist_ok=True)
-    os.makedirs(\"data\", exist_ok=True)
+    """Основная функция запуска"""
+    logger.info("🚀 Запуск Monopoly Premium Bot...")
+    logger.info("👑 Версия Темного Принца")
     
-    bot = MonopolyBot()
-    await bot.start()
+    try:
+        # Получаем токен бота
+        BOT_TOKEN = os.environ.get("BOT_TOKEN")
+        if not BOT_TOKEN:
+            logger.error("❌ BOT_TOKEN не установлен в Environment Variables!")
+            logger.info("Добавьте BOT_TOKEN в Render Dashboard -> Environment")
+            # Бесконечный цикл чтобы Render не убил процесс
+            while True:
+                await asyncio.sleep(60)
+            return
+        
+        # Инициализируем бота
+        bot, dp = await setup_bot()
+        
+        # Инициализируем базу данных
+        db = Database()
+        await db.init_database()
+        
+        # Настраиваем обработчики
+        setup_test_handlers(dp)
+        setup_commands(dp, db, {}, {})
+        setup_callbacks(dp, db, {}, {}, {}, {})
+        setup_text_handlers(dp, db, {})
+        
+        logger.info("✅ Бот инициализирован и готов к работе")
+        logger.info("📱 Тестовые команды: /test, /start")
+        
+        # Запускаем polling
+        await dp.start_polling(bot, skip_updates=True)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при запуске: {e}")
+        import traceback
+        traceback.print_exc()
+        # Бесконечный цикл для Render
+        while True:
+            await asyncio.sleep(60)
 
-if __name__ == \"__main__\":
+if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print(\"👋 Бот остановлен\")
+        print("👋 Бот остановлен пользователем")
     except Exception as e:
-        print(f\"❌ Фатальная ошибка: {e}\")
+        print(f"❌ Критическая ошибка: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
