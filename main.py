@@ -1,160 +1,109 @@
 ﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Monopoly Premium Bot - Основной файл"""
+"""Monopoly Bot - Основной файл с ВЕБ-СЕРВЕРОМ для Render"""
 
 import asyncio
 import logging
 import sys
 import os
 
-# Добавляем текущую папку в путь Python
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, current_dir)
+# ===== RENDER PORT CONFIGURATION =====
+PORT = int(os.environ.get("PORT", 10000))
+print(f"🚀 RENDER PORT: {PORT}")
+print(f"🌐 WEBHOOK URL: {os.environ.get('WEBHOOK_URL', 'Not set')}")
 
+# ===== WEB SERVER IMPORTS =====
+try:
+    from render_webserver import run_server, is_running
+    import threading
+    WEB_SERVER_AVAILABLE = True
+    print("✅ Web server module loaded")
+except ImportError as e:
+    WEB_SERVER_AVAILABLE = False
+    print(f"⚠️  Web server module not available: {e}")
+
+# ===== BOT IMPORTS =====
 print("=== ЗАПУСК MONOPOLY BOT ===")
 print("Python путь:", sys.path[:2])
-print("Текущая папка:", current_dir)
 
 try:
-    # Импортируем основные модули
     from core.bot import setup_bot
-    from core.database import Database
-    print("✅ Основные модули импортированы")
-    
-    # Импортируем обработчики
-    from handlers.commands import setup_commands
-    from handlers.callback_handlers import setup_callbacks
-    from handlers.text_handlers import setup_text_handlers
-    from test_router import setup_test_handlers
-    
-    print("✅ Обработчики импортированы")
-    
+    from handlers.commands import cmd_start, cmd_help, cmd_stats
+    from handlers.callback_handlers import register_beautiful_handlers
+    from aiogram import Bot, Dispatcher, types
+    from aiogram.contrib.middlewares.logging import LoggingMiddleware
+    from aiogram.utils import executor
+    BOT_AVAILABLE = True
 except ImportError as e:
-    print(f"❌ Ошибка импорта: {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
-
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
-logger = logging.getLogger(__name__)
+    print(f"❌ Bot import error: {e}")
+    BOT_AVAILABLE = False
 
 async def main():
     """Основная функция запуска"""
-    logger.info("🚀 Запуск Monopoly Premium Bot...")
-    logger.info("👑 Версия Темного Принца")
     
-    try:
+    # 1. ЗАПУСК ВЕБ-СЕРВЕРА (КРИТИЧЕСКИ ВАЖНО ДЛЯ RENDER!)
+    if WEB_SERVER_AVAILABLE:
+        print("🌐 Запуск веб-сервера для Render...")
+        web_thread = threading.Thread(target=run_server, daemon=True)
+        web_thread.start()
+        
+        # Ждем немного для запуска сервера
+        await asyncio.sleep(2)
+        print(f"✅ Веб-сервер запущен на порту {PORT}")
+    else:
+        print("⚠️  Веб-сервер не запущен (модуль не найден)")
+    
+    # 2. ЗАПУСК ТЕЛЕГРАМ БОТА
+    if BOT_AVAILABLE:
+        print("🤖 Запуск Telegram бота...")
+        
         # Получаем токен бота
         BOT_TOKEN = os.environ.get("BOT_TOKEN")
         if not BOT_TOKEN:
-            logger.error("❌ BOT_TOKEN не установлен в Environment Variables!")
-            logger.info("Добавьте BOT_TOKEN в Render Dashboard -> Environment")
-            # Бесконечный цикл чтобы Render не убил процесс
-            while True:
-                await asyncio.sleep(60)
+            print("❌ BOT_TOKEN не установлен!")
             return
         
-        # Инициализируем бота
-        bot, dp = await setup_bot()
+        # Инициализация бота
+        bot = Bot(token=BOT_TOKEN)
+        dp = Dispatcher(bot)
+        dp.middleware.setup(LoggingMiddleware())
         
-        # Инициализируем базу данных
-        db = Database()
-        await db.init_database()
+        # Регистрация команд
+        dp.register_message_handler(cmd_start, commands=['start'])
+        dp.register_message_handler(cmd_help, commands=['help'])
+        dp.register_message_handler(cmd_stats, commands=['stats'])
         
-        # Настраиваем обработчики
-        setup_test_handlers(dp)
-        setup_commands(dp, db, {}, {})
-        setup_callbacks(dp, db, {}, {}, {}, {})
-        setup_text_handlers(dp, db, {})
+        # Регистрация обработчиков красивого дизайна
+        try:
+            register_beautiful_handlers(dp)
+            print("✅ Beautiful handlers registered")
+        except Exception as e:
+            print(f"⚠️  Beautiful handlers error: {e}")
         
-        logger.info("✅ Бот инициализирован и готов к работе")
-        logger.info("📱 Тестовые команды: /test, /start")
-        
-        # Запускаем polling
-        await dp.start_polling(bot, skip_updates=True)
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка при запуске: {e}")
-        import traceback
-        traceback.print_exc()
-        # Бесконечный цикл для Render
-        while True:
-            await asyncio.sleep(60)
+        # Запуск бота
+        print(f"🎮 Бот запущен: @{bot.me.username}")
+        await dp.start_polling()
+    else:
+        print("🤖 Telegram бот не запущен (ошибка импорта)")
+        print("⚠️  Но веб-сервер работает! Render увидит порт.")
 
-if __name__ == "__main__":
+def start_web_only():
+    """Запуск ТОЛЬКО веб-сервера (fallback)"""
+    if WEB_SERVER_AVAILABLE:
+        print("🌐 Запускаю ТОЛЬКО веб-сервер для Render...")
+        run_server()
+    else:
+        print("❌ Не могу запустить веб-сервер")
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
+    
     try:
+        # Пытаемся запустить всё
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("👋 Бот остановлен пользователем")
+        print("\n👋 Остановка по Ctrl+C")
     except Exception as e:
         print(f"❌ Критическая ошибка: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
-# Импорт игровых обработчиков
-try:
-    from handlers.game_handlers import game_router
-    print("✅ Игровые обработчики импортированы")
-except ImportError as e:
-    print(f"⚠️ Игровые обработчики не импортированы: {e}")
-
-class MonopolyBot:
-    def __init__(self):
-        self.bot = None
-        self.dp = None
-        self.db = Database()
-        self.rate_limiter = RateLimiter()
-        self.scheduler = GameScheduler()
-        self.web_server = WebServer()
-
-    async def start(self):
-        """Запуск бота"""
-        try:
-            logger.info("🚀 Запуск Monopoly Premium Bot...")
-            logger.info("👑 Версия Темного Принца")
-            
-            # Проверяем наличие токена
-            BOT_TOKEN = os.environ.get("BOT_TOKEN")
-            if not BOT_TOKEN:
-                logger.error("❌ BOT_TOKEN не установлен!")
-                logger.info("🔧 Режим техработ включен")
-                STATS["maintenance_mode"] = True
-                # Запускаем веб-сервер для Render
-                await self.web_server.start(None)
-                return
-            
-            await self.db.init_database()
-            self.bot, self.dp = await setup_bot()
-            
-            # Регистрация ВСЕХ обработчиков
-            setup_test_handlers(self.dp)
-            setup_commands(self.dp, self.db, HIDDEN_MENU_USERS, STATS)
-            setup_callbacks(self.dp, self.db, WAITING_GAMES, ACTIVE_GAMES, HIDDEN_MENU_USERS, STATS)
-            setup_text_handlers(self.dp, self.db, ACTIVE_GAMES)
-            
-            # Регистрация игровых обработчиков
-            try:
-                self.dp.include_router(game_router)
-                logger.info("✅ Игровые обработчики зарегистрированы")
-            except:
-                logger.warning("⚠️ Не удалось зарегистрировать игровые обработчики")
-            
-            logger.info("✅ Бот инициализирован")
-            logger.info("🎮 Доступны игровые функции")
-            
-            await self.dp.start_polling(self.bot, skip_updates=True)
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка: {e}")
-            import traceback
-            traceback.print_exc()
-            STATS["maintenance_mode"] = True
-            # Бесконечный цикл для Render
-            while True:
-                await asyncio.sleep(60)
+        print("🔄 Пробую запустить только веб-сервер...")
+        start_web_only()
