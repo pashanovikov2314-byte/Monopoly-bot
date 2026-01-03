@@ -1,0 +1,50 @@
+﻿[
+    {
+        "id": 0,
+        "name": "СТАРТ",
+        "type": "go",
+        "price": 0,
+        "rent": 0,
+        "color": "none"
+    },
+    {
+        "id": 1,
+        "name": "Балтийский проспект",
+        "type": "property",
+        "price": 60,
+        "rent": 2,
+        "color": "brown"
+    },
+    {
+        "id": 2,
+        "name": "Общественная казна",
+        "type": "community",
+        "price": 0,
+        "rent": 0,
+        "color": "none"
+    },
+    {
+        "id": 3,
+        "name": "Ориентал авеню",
+        "type": "property",
+        "price": 60,
+        "rent": 4,
+        "color": "brown"
+    },
+    {
+        "id": 4,
+        "name": "Подоходный налог",
+        "type": "tax",
+        "price": 200,
+        "rent": 0,
+        "color": "none"
+    },
+    {
+        "id": 5,
+        "name": "Вокзал Ридинг",
+        "type": "railroad",
+        "price": 200,
+        "rent": 25,
+        "color": "railroad"
+    }
+]

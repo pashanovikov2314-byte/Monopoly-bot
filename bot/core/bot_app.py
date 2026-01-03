@@ -5,6 +5,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 from bot.handlers.commands import register_commands
 from bot.handlers.callbacks import register_callbacks
 from bot.handlers.messages import register_messages
+from bot.handlers.game_handlers import register_game_handlers
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +28,14 @@ class MonopolyBot:
         # Регистрируем обработчики сообщений
         register_messages(self.application)
         
+        # Регистрируем игровые обработчики
+        register_game_handlers(self.application)
+        register_messages(self.application)
+        
         logger.info("✅ Все обработчики зарегистрированы")
     
     def run(self):
         """Запуск бота"""
         logger.info("🚀 Monopoly Bot запускается...")
         self.application.run_polling()
+

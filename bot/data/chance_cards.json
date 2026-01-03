@@ -1,0 +1,30 @@
+﻿[
+    {
+        "id": 1,
+        "type": "chance",
+        "description": "Отправьтесь на Старт. Получите $200",
+        "action": "move_to_start",
+        "value": 200
+    },
+    {
+        "id": 2,
+        "type": "chance",
+        "description": "Банк выплачивает вам дивиденды $50",
+        "action": "receive_money",
+        "value": 50
+    },
+    {
+        "id": 3,
+        "type": "chance",
+        "description": "Отправляйтесь в тюрьму. Отправляйтесь прямо в тюрьму",
+        "action": "go_to_jail",
+        "value": 0
+    },
+    {
+        "id": 4,
+        "type": "chance",
+        "description": "Заплатите за ремонт улиц: $40 за каждый дом, $115 за каждый отель",
+        "action": "pay_for_repairs",
+        "value": 40
+    }
+]
