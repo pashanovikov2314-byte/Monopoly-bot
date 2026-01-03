@@ -1,4 +1,5 @@
-﻿"""Web server for Render.com (обязательно!)"""
+﻿# -*- coding: utf-8 -*-
+"""Веб-сервер для Render.com"""
 
 import os
 import threading
@@ -6,7 +7,7 @@ from flask import Flask, jsonify
 
 app = Flask(__name__)
 
-@app.route('/')
+@app.route("/")
 def home():
     """Главная страница для проверки работы"""
     return jsonify({
@@ -16,34 +17,33 @@ def home():
         "health": "ok"
     })
 
-@app.route('/health')
+@app.route("/health")
 def health():
     """Health check для Render"""
     return "OK", 200
 
-@app.route('/ping')
+@app.route("/ping")
 def ping():
     """Проверка ping"""
     return "pong", 200
 
-@app.route('/status')
+@app.route("/status")
 def status():
     """Статус сервиса"""
     return jsonify({
         "bot": "running",
         "web": "online",
-        "timestamp": os.times().system
+        "timestamp": 123456789
     })
 
 def run_web_server():
     """Запуск веб-сервера (КРИТИЧНО ДЛЯ RENDER!)"""
     port = int(os.environ.get("PORT", 10000))
-    print(f"🚀 [WEB SERVER] Запуск на порту {port}")
-    print(f"🌐 [WEB SERVER] Доступен по: http://0.0.0.0:{port}")
+    print(f"Запуск веб-сервера на порту {port}")
+    print(f"Доступен по: http://0.0.0.0:{port}")
     
-    # Важно: host='0.0.0.0' для Render!
     app.run(
-        host='0.0.0.0',
+        host="0.0.0.0",
         port=port,
         debug=False,
         threaded=True,
