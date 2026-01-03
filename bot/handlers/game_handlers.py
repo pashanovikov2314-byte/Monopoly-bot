@@ -184,7 +184,8 @@ def register_game_handlers(application):
     application.add_handler(CallbackQueryHandler(start_game, pattern='^multi$'))
     application.add_handler(CallbackQueryHandler(start_game, pattern='^fast$'))
     application.add_handler(CallbackQueryHandler(roll_dice_handler, pattern='^roll_dice$'))
-    application.add_handler(CallbackQueryHandler(buy_property_handler, pattern='^buy_\d+$'))
+    application.add_handler(CallbackQueryHandler(buy_property_handler, pattern='^buy_'))
     application.add_handler(CallbackQueryHandler(game_status_handler, pattern='^game_status$'))
     
     logger.info("✅ Игровые обработчики зарегистрированы")
+
