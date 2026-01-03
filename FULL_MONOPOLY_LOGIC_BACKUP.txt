@@ -1,0 +1,1987 @@
+﻿============== MONOPOLY BOT LOGIC REPORT ==============
+
+📅 Дата: 01/03/2026 17:44:09
+📁 Проект: Monopoly-bot
+
+📋 СОДЕРЖАНИЕ КЛЮЧЕВЫХ ФАЙЛОВ:
+======================================================
+
+==================================================
+📄 ФАЙЛ: main.py
+==================================================
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Monopoly Bot - Основной файл с ВЕБ-СЕРВЕРОМ для Render"""
+
+import asyncio
+import logging
+import sys
+import os
+
+# ===== RENDER PORT CONFIGURATION =====
+PORT = int(os.environ.get("PORT", 10000))
+print(f"🚀 RENDER PORT: {PORT}")
+print(f"🌐 WEBHOOK URL: {os.environ.get('WEBHOOK_URL', 'Not set')}")
+
+# ===== WEB SERVER IMPORTS =====
+try:
+    from render_webserver import run_server, is_running
+    import threading
+    WEB_SERVER_AVAILABLE = True
+    print("✅ Web server module loaded")
+except ImportError as e:
+    WEB_SERVER_AVAILABLE = False
+    print(f"⚠️  Web server module not available: {e}")
+
+# ===== BOT IMPORTS =====
+print("=== ЗАПУСК MONOPOLY BOT ===")
+print("Python путь:", sys.path[:2])
+
+try:
+    from core.bot import setup_bot
+    from handlers.commands import cmd_start, cmd_help, cmd_stats
+    from handlers.callback_handlers import register_beautiful_handlers
+    from aiogram import Bot, Dispatcher, types
+    from aiogram.contrib.middlewares.logging import LoggingMiddleware
+    from aiogram.utils import executor
+    BOT_AVAILABLE = True
+except ImportError as e:
+    print(f"❌ Bot import error: {e}")
+    BOT_AVAILABLE = False
+
+async def main():
+    """Основная функция запуска"""
+    
+    # 1. ЗАПУСК ВЕБ-СЕРВЕРА (КРИТИЧЕСКИ ВАЖНО ДЛЯ RENDER!)
+    if WEB_SERVER_AVAILABLE:
+        print("🌐 Запуск веб-сервера для Render...")
+        web_thread = threading.Thread(target=run_server, daemon=True)
+        web_thread.start()
+        
+        # Ждем немного для запуска сервера
+        await asyncio.sleep(2)
+        print(f"✅ Веб-сервер запущен на порту {PORT}")
+    else:
+        print("⚠️  Веб-сервер не запущен (модуль не найден)")
+    
+    # 2. ЗАПУСК ТЕЛЕГРАМ БОТА
+    if BOT_AVAILABLE:
+        print("🤖 Запуск Telegram бота...")
+        
+        # Получаем токен бота
+        BOT_TOKEN = os.environ.get("BOT_TOKEN")
+        if not BOT_TOKEN:
+            print("❌ BOT_TOKEN не установлен!")
+            return
+        
+        # Инициализация бота
+        bot = Bot(token=BOT_TOKEN)
+        dp = Dispatcher(bot)
+        dp.middleware.setup(LoggingMiddleware())
+        
+        # Регистрация команд
+        dp.register_message_handler(cmd_start, commands=['start'])
+        dp.register_message_handler(cmd_help, commands=['help'])
+        dp.register_message_handler(cmd_stats, commands=['stats'])
+        
+        # Регистрация обработчиков красивого дизайна
+        try:
+            register_beautiful_handlers(dp)
+            print("✅ Beautiful handlers registered")
+        except Exception as e:
+            print(f"⚠️  Beautiful handlers error: {e}")
+        
+        # Запуск бота
+        print(f"🎮 Бот запущен: @{bot.me.username}")
+        await dp.start_polling()
+    else:
+        print("🤖 Telegram бот не запущен (ошибка импорта)")
+        print("⚠️  Но веб-сервер работает! Render увидит порт.")
+
+def start_web_only():
+    """Запуск ТОЛЬКО веб-сервера (fallback)"""
+    if WEB_SERVER_AVAILABLE:
+        print("🌐 Запускаю ТОЛЬКО веб-сервер для Render...")
+        run_server()
+    else:
+        print("❌ Не могу запустить веб-сервер")
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
+    
+    try:
+        # Пытаемся запустить всё
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n👋 Остановка по Ctrl+C")
+    except Exception as e:
+        print(f"❌ Критическая ошибка: {e}")
+        print("🔄 Пробую запустить только веб-сервер...")
+        start_web_only()
+
+
+==================================================
+📄 ФАЙЛ: core/bot.py
+==================================================
+
+from aiogram import Bot, Dispatcher
+
+async def setup_bot():
+    """Инициализация бота"""
+    import os
+    token = os.environ.get("BOT_TOKEN")
+    if not token:
+        raise ValueError("BOT_TOKEN не установлен")
+    
+    bot = Bot(token=token)
+    dp = Dispatcher()
+    return bot, dp
+
+
+==================================================
+📄 ФАЙЛ: core/database.py
+==================================================
+
+class Database:
+    async def init_database(self):
+        print("База данных инициализирована")
+
+
+==================================================
+📄 ФАЙЛ: handlers/commands.py
+==================================================
+
+from aiogram import types
+from aiogram.dispatcher import FSMContext
+from core.beautiful_design import BeautifulDesign
+
+async def cmd_start(message: types.Message, state: FSMContext):
+    """Красивая команда старта"""
+    await state.finish()
+    
+    # Используем новый дизайн
+    welcome_text = BeautifulDesign.welcome_message(message.from_user)
+    keyboard = BeautifulDesign.create_main_menu()
+    
+    # Отправляем стилизованное сообщение
+    await message.answer(
+        welcome_text,
+        reply_markup=keyboard,
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+async def cmd_help(message: types.Message):
+    """Красивая справка"""
+    help_text = BeautifulDesign.notification("info", 
+        """Для начала игры нажмите "Новая игра"
+        
+Управление в игре:
+• 🎲 Бросить кубики - сделать ход
+• 💵 Купить участок - приобрести клетку
+• 🏗️ Строить - строить дома/отели
+• 💳 Торговать - обмен с другими игроками
+
+Специальные команды:
+• 👁️ Скрыть меню - убрать кнопки
+• ✨ Показать меню - вернуть кнопки
+• 📱 Компактный вид - минималистичный интерфейс
+
+По всем вопросам: @support""")
+    
+    await message.answer(help_text, parse_mode="HTML")
+
+async def cmd_stats(message: types.Message):
+    """Красивая статистика"""
+    # Пример данных статистики
+    stats = {
+        "total_games": 15,
+        "wins": 8,
+        "max_balance": 2500000,
+        "avg_time": 25,
+        "trades": 12,
+        "houses": 7,
+        "hotels": 2,
+        "achievements": ["Первый миллион", "Владелец 5 участков", "Торговый магнат"],
+        "rank": 42
+    }
+    
+    stats_text = BeautifulDesign.create_stats_display(stats)
+    await message.answer(stats_text, parse_mode="HTML")
+
+
+==================================================
+📄 ФАЙЛ: handlers/game_handlers.py
+==================================================
+
+"""Обработчики игровых действий"""
+from aiogram import Router, F
+from aiogram.types import CallbackQuery, Message
+from aiogram.filters import Command
+import logging
+import random
+from datetime import datetime
+from typing import Dict, List, Optional
+
+from game.game_engine import MonopolyGame, create_new_game, get_game, active_games
+from keyboards.game_keyboards import (
+    get_game_reply_keyboard, get_game_inline_keyboard,
+    get_bank_keyboard, get_mortgage_keyboard,
+    get_build_keyboard, get_trade_keyboard,
+    get_confirm_keyboard, get_game_info_keyboard,
+    remove_game_keyboard
+)
+from keyboards.keyboard_system import get_main_reply_keyboard
+
+logger = logging.getLogger(__name__)
+
+game_router = Router()
+
+# Хранилище игровых сессий
+game_sessions: Dict[int, Dict] = {}  # user_id -> {game_id, last_action}
+
+# ========== ОБРАБОТКА REPLY КНОПОК В ИГРЕ ==========
+
+@game_router.message(F.text == "🎲 БРОСИТЬ КУБИКИ")
+async def handle_game_roll_dice(message: Message):
+    """Бросок кубиков в игре"""
+    user_id = message.from_user.id
+    
+    if user_id not in game_sessions:
+        await message.answer("❌ Вы не в игре!")
+        return
+    
+    game_id = game_sessions[user_id]["game_id"]
+    game = get_game(game_id)
+    
+    if not game:
+        await message.answer("❌ Игра не найдена!")
+        del game_sessions[user_id]
+        return
+    
+    # Проверяем ход игрока
+    current_player = game.get_current_player()
+    if not current_player or current_player.user_id != user_id:
+        await message.answer("⏳ Сейчас не ваш ход!")
+        return
+    
+    try:
+        # Бросаем кубики
+        dice1, dice2, is_double = game.roll_dice(user_id)
+        
+        # Получаем информацию о позиции
+        pos_info = game.get_current_position_info(user_id)
+        
+        # Формируем сообщение
+        dice_text = f"🎲 *Бросок кубиков:* {dice1} + {dice2} = **{dice1 + dice2}**"
+        
+        if is_double:
+            dice_text += "\n🎯 *ДУБЛЬ!* Вы бросаете еще раз!"
+        
+        position_text = f"\n\n📍 *Вы на:* {pos_info['property_name']}"
+        
+        # Проверяем нужно ли платить аренду
+        if pos_info['owner'] and pos_info['owner'] != user_id:
+            rent = pos_info['rent']
+            player = game.players[user_id]
+            owner = game.players[pos_info['owner']]
+            
+            if player.balance >= rent:
+                player.balance -= rent
+                owner.balance += rent
+                rent_text = f"\n💸 *Аренда:* -${rent} → {owner.username}"
+            else:
+                rent_text = f"\n💀 *БАНКРОТСТВО!* Не можете оплатить аренду ${rent}"
+        else:
+            rent_text = ""
+        
+        # Проверяем можно ли купить
+        buy_text = ""
+        if pos_info['can_buy']:
+            buy_text = f"\n💰 *Можно купить за:* ${pos_info['price']}"
+        
+        # Отправляем полное сообщение
+        response = dice_text + position_text + rent_text + buy_text
+        
+        await message.answer(response, parse_mode="Markdown")
+        
+        # Обновляем клавиатуру
+        await message.answer(
+            "🎮 *Ваш ход продолжается...*" if is_double else "➡️ *Ход переходит к следующему игроку*",
+            parse_mode="Markdown",
+            reply_markup=get_game_reply_keyboard(game, user_id)
+        )
+        
+        # Если не дубль - следующий ход
+        if not is_double:
+            game.next_turn()
+            
+            # Уведомляем следующего игрока
+            next_player = game.get_current_player()
+            if next_player:
+                try:
+                    await message.bot.send_message(
+                        chat_id=next_player.user_id,
+                        text=f"🎮 *Ваш ход в игре #{game.id}!*",
+                        parse_mode="Markdown",
+                        reply_markup=get_game_reply_keyboard(game, next_player.user_id)
+                    )
+                except:
+                    pass  # Игрок может быть offline
+        
+        # Обновляем время последнего действия
+        game_sessions[user_id]["last_action"] = datetime.now()
+        
+    except Exception as e:
+        logger.error(f"Ошибка при броске кубиков: {e}")
+        await message.answer("❌ Ошибка при броске кубиков!")
+
+@game_router.message(F.text == "🏠 КУПИТЬ НЕДВИЖИМОСТЬ")
+async def handle_buy_property(message: Message):
+    """Покупка недвижимости"""
+    user_id = message.from_user.id
+    
+    if user_id not in game_sessions:
+        await message.answer("❌ Вы не в игре!")
+        return
+    
+    game_id = game_sessions[user_id]["game_id"]
+    game = get_game(game_id)
+    
+    if not game:
+        await message.answer("❌ Игра не найдена!")
+        return
+    
+    # Проверяем ход игрока
+    current_player = game.get_current_player()
+    if not current_player or current_player.user_id != user_id:
+        await message.answer("⏳ Сейчас не ваш ход!")
+        return
+    
+    # Получаем информацию о позиции
+    pos_info = game.get_current_position_info(user_id)
+    
+    if not pos_info["can_buy"]:
+        await message.answer("❌ Эту недвижимость нельзя купить!")
+        return
+    
+    # Пытаемся купить
+    if game.buy_property(user_id):
+        player = game.players[user_id]
+        
+        await message.answer(
+            f"✅ *Покупка успешна!*\n"
+            f"🏠 *Недвижимость:* {pos_info['property_name']}\n"
+            f"💰 *Цена:* ${pos_info['price']}\n"
+            f"💵 *Новый баланс:* ${player.balance}",
+            parse_mode="Markdown"
+        )
+        
+        # Обновляем клавиатуру
+        await message.answer(
+            "🎮 *Продолжайте ваш ход...*",
+            parse_mode="Markdown",
+            reply_markup=get_game_reply_keyboard(game, user_id)
+        )
+    else:
+        await message.answer("❌ Недостаточно средств для покупки!")
+
+@game_router.message(F.text == "🏦 ОТКРЫТЬ БАНК")
+async def handle_open_bank(message: Message):
+    """Открыть банк"""
+    user_id = message.from_user.id
+    
+    if user_id not in game_sessions:
+        await message.answer("❌ Вы не в игре!")
+        return
+    
+    game_id = game_sessions[user_id]["game_id"]
+    
+    await message.answer(
+        "🏦 *БАНК MONOPOLY*\n\n"
+        "💰 *Операции:*\n"
+        "• Получить $200 за проход через Старт\n"
+        "• Взять кредит под 10%\n"
+        "• Внести деньги на депозит\n"
+        "• Проверить баланс\n\n"
+        "*Используйте кнопки ниже для операций:*",
+        parse_mode="Markdown"
+    )
+
+@game_router.message(F.text == "💳 УПРАВЛЕНИЕ ЗАЛОГОМ")
+async def handle_mortgage_menu(message: Message):
+    """Меню залога"""
+    user_id = message.from_user.id
+    
+    if user_id not in game_sessions:
+        await message.answer("❌ Вы не в игре!")
+        return
+    
+    game_id = game_sessions[user_id]["game_id"]
+    game = get_game(game_id)
+    
+    if not game:
+        await message.answer("❌ Игра не найдена!")
+        return
+    
+    player = game.players.get(user_id)
+    if not player:
+        await message.answer("❌ Вы не в этой игре!")
+        return
+    
+    # Получаем недвижимость игрока
+    player_props = []
+    for i, prop in enumerate(game.board):
+        if prop.owner == user_id:
+            player_props.append({
+                "id": i,
+                "name": prop.name,
+                "price": prop.price,
+                "mortgage_value": prop.price // 2,
+                "is_mortgaged": prop.is_mortgaged
+            })
+    
+    if not player_props:
+        await message.answer("❌ У вас нет недвижимости для залога!")
+        return
+    
+    prop_list = "\n".join([
+        f"• {p['name']}: ${p['price']} (залог: ${p['mortgage_value']})"
+        for p in player_props[:5]
+    ])
+    
+    await message.answer(
+        f"💳 *ВАША НЕДВИЖИМОСТЬ*\n\n{prop_list}\n\n"
+        f"*Выберите недвижимость для залога или выкупа:*",
+        parse_mode="Markdown"
+    )
+
+@game_router.message(F.text == "🔄 ПРЕДЛОЖИТЬ СДЕЛКУ")
+async def handle_trade_offer(message: Message):
+    """Предложение сделки"""
+    user_id = message.from_user.id
+    
+    if user_id not in game_sessions:
+        await message.answer("❌ Вы не в игре!")
+        return
+    
+    game_id = game_sessions[user_id]["game_id"]
+    game = get_game(game_id)
+    
+    if not game:
+        await message.answer("❌ Игра не найдена!")
+        return
+    
+    # Получаем других игроков
+    other_players = []
+    for pid, player in game.players.items():
+        if pid != user_id and not player.is_bankrupt:
+            other_players.append({
+                "id": pid,
+                "name": player.username,
+                "balance": player.balance
+            })
+    
+    if not other_players:
+        await message.answer("❌ Нет других игроков для торговли!")
+        return
+    
+    players_list = "\n".join([
+        f"• {p['name']} (${p['balance']})"
+        for p in other_players[:3]
+    ])
+    
+    await message.answer(
+        f"🔄 *ТОРГОВЛЯ С ИГРОКАМИ*\n\n{players_list}\n\n"
+        f"*Выберите игрока для сделки:*",
+        parse_mode="Markdown"
+    )
+
+@game_router.message(F.text == "🏗️ ПОСТРОИТЬ ДОМ")
+async def handle_build_house(message: Message):
+    """Построить дом"""
+    user_id = message.from_user.id
+    
+    if user_id not in game_sessions:
+        await message.answer("❌ Вы не в игре!")
+        return
+    
+    game_id = game_sessions[user_id]["game_id"]
+    game = get_game(game_id)
+    
+    if not game:
+        await message.answer("❌ Игра не найдена!")
+        return
+    
+    player = game.players.get(user_id)
+    if not player:
+        await message.answer("❌ Вы не в этой игре!")
+        return
+    
+    # Получаем улицы где можно строить
+    buildable_props = []
+    for i, prop in enumerate(game.board):
+        if prop.owner == user_id and not prop.is_mortgaged:
+            # Проверяем что игрок владеет всей группой
+            group_props = [p for p in game.board if p.group == prop.group]
+            if all(p.owner == user_id for p in group_props):
+                build_price = prop.price // 2
+                buildable_props.append({
+                    "id": i,
+                    "name": prop.name,
+                    "price": prop.price,
+                    "build_price": build_price,
+                    "houses": prop.houses,
+                    "max_houses": 5
+                })
+    
+    if not buildable_props:
+        await message.answer("❌ У вас нет улиц для строительства!")
+        return
+    
+    houses_list = "\n".join([
+        f"• {p['name']}: {p['houses']}/5 домов (${p['build_price']} за дом)"
+        for p in buildable_props[:4]
+    ])
+    
+    await message.answer(
+        f"🏗️ *СТРОИТЕЛЬСТВО ДОМОВ*\n\n{houses_list}\n\n"
+        f"*Выберите улицу для строительства:*",
+        parse_mode="Markdown"
+    )
+
+@game_router.message(F.text == "⏭️ ЗАКОНЧИТЬ ХОД")
+async def handle_end_turn(message: Message):
+    """Завершить ход"""
+    user_id = message.from_user.id
+    
+    if user_id not in game_sessions:
+        await message.answer("❌ Вы не в игре!")
+        return
+    
+    game_id = game_sessions[user_id]["game_id"]
+    game = get_game(game_id)
+    
+    if not game:
+        await message.answer("❌ Игра не найдена!")
+        return
+    
+    # Проверяем ход игрока
+    current_player = game.get_current_player()
+    if not current_player or current_player.user_id != user_id:
+        await message.answer("⏳ Сейчас не ваш ход!")
+        return
+    
+    # Переходим к следующему ходу
+    game.next_turn()
+    
+    await message.answer(
+        "✅ *Ход завершен!*\n➡️ *Ход переходит к следующему игроку*",
+        parse_mode="Markdown"
+    )
+    
+    # Уведомляем следующего игрока
+    next_player = game.get_current_player()
+    if next_player:
+        try:
+            await message.bot.send_message(
+                chat_id=next_player.user_id,
+                text=f"🎮 *Ваш ход в игре #{game.id}!*",
+                parse_mode="Markdown",
+                reply_markup=get_game_reply_keyboard(game, next_player.user_id)
+            )
+        except:
+            pass  # Игрок может быть offline
+
+@game_router.message(F.text == "👀 НАБЛЮДАТЬ ЗА ИГРОЙ")
+async def handle_spectate_game(message: Message):
+    """Наблюдать за игрой"""
+    user_id = message.from_user.id
+    
+    if user_id not in game_sessions:
+        await message.answer("❌ Вы не в игре!")
+        return
+    
+    game_id = game_sessions[user_id]["game_id"]
+    game = get_game(game_id)
+    
+    if not game:
+        await message.answer("❌ Игра не найдена!")
+        return
+    
+    # Получаем информацию об игре
+    game_state = game.get_game_state()
+    current_player = game.get_current_player()
+    
+    player_list = "\n".join([
+        f"• {player.username}: ${player.balance}"
+        for player in game.players.values() if not player.is_bankrupt
+    ])
+    
+    await message.answer(
+        f"👀 *НАБЛЮДЕНИЕ ЗА ИГРОЙ #{game.id}*\n\n"
+        f"🎮 *Текущий ход:* {current_player.username if current_player else 'Нет'}\n"
+        f"📊 *Ход номер:* {game_state['turn_number']}\n"
+        f"⏱️ *Длительность:* {game_state['duration']} сек\n\n"
+        f"👥 *Игроки:*\n{player_list}",
+        parse_mode="Markdown"
+    )
+
+@game_router.message(F.text == "📊 СТАТИСТИКА ИГРЫ")
+async def handle_game_stats(message: Message):
+    """Статистика игры"""
+    user_id = message.from_user.id
+    
+    if user_id not in game_sessions:
+        await message.answer("❌ Вы не в игре!")
+        return
+    
+    game_id = game_sessions[user_id]["game_id"]
+    game = get_game(game_id)
+    
+    if not game:
+        await message.answer("❌ Игра не найдена!")
+        return
+    
+    game_state = game.get_game_state()
+    
+    # Сортируем игроков по балансу
+    sorted_players = sorted(
+        [p for p in game.players.values() if not p.is_bankrupt],
+        key=lambda x: x.balance,
+        reverse=True
+    )
+    
+    leaderboard = "\n".join([
+        f"{i+1}. {player.username}: ${player.balance}"
+        for i, player in enumerate(sorted_players[:5])
+    ])
+    
+    # Подсчитываем недвижимость
+    property_stats = {}
+    for prop in game.board:
+        if prop.owner and prop.price > 0:
+            owner_name = game.players[prop.owner].username
+            if owner_name not in property_stats:
+                property_stats[owner_name] = 0
+            property_stats[owner_name] += 1
+    
+    property_text = "\n".join([
+        f"• {name}: {count} объектов"
+        for name, count in list(property_stats.items())[:3]
+    ]) if property_stats else "• Недвижимость не куплена"
+    
+    await message.answer(
+        f"📊 *СТАТИСТИКА ИГРЫ #{game.id}*\n\n"
+        f"🏆 *Лидеры:*\n{leaderboard}\n\n"
+        f"🏠 *Недвижимость:*\n{property_text}\n\n"
+        f"🎮 *Активных игроков:* {game_state['active_players']}\n"
+        f"⏱️ *Время игры:* {game_state['duration']} сек",
+        parse_mode="Markdown"
+    )
+
+@game_router.message(F.text == "📋 ИНФОРМАЦИЯ ОБ ИГРЕ")
+async def handle_game_info(message: Message):
+    """Информация об игре"""
+    user_id = message.from_user.id
+    
+    if user_id not in game_sessions:
+        await message.answer("❌ Вы не в игре!")
+        return
+    
+    game_id = game_sessions[user_id]["game_id"]
+    game = get_game(game_id)
+    
+    if not game:
+        await message.answer("❌ Игра не найдена!")
+        return
+    
+    current_player = game.get_current_player()
+    pos_info = game.get_current_position_info(user_id) if user_id in game.players else {}
+    
+    info_text = (
+        f"🎮 *ИГРА #{game.id}*\n\n"
+        f"👑 *Создатель:* {game.players[game.creator_id].username}\n"
+        f"🎯 *Текущий ход:* {current_player.username if current_player else 'Нет'}\n"
+        f"👥 *Игроков:* {len(game.players)}\n"
+        f"📅 *Начата:* {game.start_time.strftime('%H:%M') if game.start_time else 'Не начата'}\n"
+    )
+    
+    # Если игрок в игре - добавляем его информацию
+    if user_id in game.players:
+        player = game.players[user_id]
+        info_text += (
+            f"\n👤 *ВАША ИНФОРМАЦИЯ:*\n"
+            f"💰 *Баланс:* ${player.balance}\n"
+            f"📍 *Позиция:* {pos_info.get('property_name', 'Неизвестно')}\n"
+            f"🏠 *Недвижимость:* {len(player.properties)} объектов\n"
+            f"🎯 *Ваш порядок хода:* {player.order + 1}\n"
+        )
+    
+    await message.answer(info_text, parse_mode="Markdown")
+
+@game_router.message(F.text == "🚪 ВЫЙТИ ИЗ ИГРЫ")
+async def handle_leave_game(message: Message):
+    """Выйти из игры"""
+    user_id = message.from_user.id
+    
+    if user_id not in game_sessions:
+        await message.answer("❌ Вы не в игре!")
+        return
+    
+    game_id = game_sessions[user_id]["game_id"]
+    game = get_game(game_id)
+    
+    if not game:
+        await message.answer("❌ Игра не найдена!")
+        del game_sessions[user_id]
+        return
+    
+    # Удаляем игрока из игры
+    if user_id in game.players:
+        player_name = game.players[user_id].username
+        game.remove_player(user_id)
+        
+        # Уведомляем других игроков
+        for pid in game.players:
+            if pid != user_id:
+                try:
+                    await message.bot.send_message(
+                        chat_id=pid,
+                        text=f"⚠️ *Игрок {player_name} вышел из игры!*",
+                        parse_mode="Markdown"
+                    )
+                except:
+                    pass
+    
+    # Удаляем сессию
+    del game_sessions[user_id]
+    
+    await message.answer(
+        "🚪 *Вы вышли из игры!*\n\n"
+        "⬅️ *Возвращаемся в главное меню...*",
+        parse_mode="Markdown",
+        reply_markup=get_main_reply_keyboard()
+    )
+    
+    # Проверяем остались ли игроки в игре
+    if len(game.players) < 2:
+        # Завершаем игру если остался 1 игрок или меньше
+        winner_id = next(iter(game.players.keys())) if game.players else None
+        if winner_id:
+            winner_name = game.players[winner_id].username
+            for pid in game.players:
+                try:
+                    await message.bot.send_message(
+                        chat_id=pid,
+                        text=f"🏆 *Игра завершена! Победитель: {winner_name}!*",
+                        parse_mode="Markdown",
+                        reply_markup=get_main_reply_keyboard()
+                    )
+                except:
+                    pass
+        
+        # Удаляем игру
+        if game_id in active_games:
+            del active_games[game_id]
+
+# ========== ОБРАБОТКА CALLBACK КНОПОК ИГРЫ ==========
+
+@game_router.callback_query(F.data.startswith("game:"))
+async def handle_game_callback(callback: CallbackQuery):
+    """Обработка игровых callback кнопок"""
+    data_parts = callback.data.split(":")
+    
+    if len(data_parts) < 3:
+        await callback.answer("❌ Ошибка в данных кнопки")
+        return
+    
+    action = data_parts[2]
+    game_id = int(data_parts[1])
+    
+    # Всегда отвечаем на callback (100% отклик)
+    await callback.answer(f"⏳ Обрабатываем: {action}...")
+    
+    game = get_game(game_id)
+    if not game:
+        await callback.message.answer("❌ Игра не найдена!")
+        return
+    
+    user_id = callback.from_user.id
+    
+    # Проверяем что пользователь в этой игре
+    if user_id not in game.players:
+        await callback.message.answer("❌ Вы не участник этой игры!")
+        return
+    
+    if action == "roll_dice":
+        await handle_game_roll_dice_callback(callback, game, user_id)
+    elif action == "buy_property":
+        await handle_buy_property_callback(callback, game, user_id)
+    elif action == "bank":
+        await handle_bank_callback(callback, game, user_id)
+    elif action == "end_turn":
+        await handle_end_turn_callback(callback, game, user_id)
+    elif action == "leave":
+        await handle_leave_callback(callback, game, user_id)
+    elif action == "info":
+        await handle_game_info_callback(callback, game)
+    elif action == "players":
+        await handle_players_list_callback(callback, game)
+    elif action == "spectate":
+        await handle_spectate_callback(callback, game, user_id)
+    elif action == "stats":
+        await handle_stats_callback(callback, game)
+    elif action == "back_to_game":
+        await handle_back_to_game(callback, game, user_id)
+
+async def handle_game_roll_dice_callback(callback: CallbackQuery, game: MonopolyGame, user_id: int):
+    """Callback для броска кубиков"""
+    try:
+        dice1, dice2, is_double = game.roll_dice(user_id)
+        pos_info = game.get_current_position_info(user_id)
+        
+        response = (
+            f"🎲 *Бросок кубиков:* {dice1} + {dice2} = **{dice1 + dice2}**\n"
+            f"📍 *Позиция:* {pos_info['property_name']}\n"
+        )
+        
+        if is_double:
+            response += "🎯 *ДУБЛЬ!* Бросайте еще раз!"
+        
+        await callback.message.answer(response, parse_mode="Markdown")
+        
+        if not is_double:
+            game.next_turn()
+            
+    except Exception as e:
+        logger.error(f"Ошибка в callback броска кубиков: {e}")
+        await callback.message.answer("❌ Ошибка при броске кубиков!")
+
+async def handle_buy_property_callback(callback: CallbackQuery, game: MonopolyGame, user_id: int):
+    """Callback для покупки недвижимости"""
+    pos_info = game.get_current_position_info(user_id)
+    
+    if game.buy_property(user_id):
+        player = game.players[user_id]
+        await callback.message.answer(
+            f"✅ *Куплено:* {pos_info['property_name']}\n"
+            f"💰 *За:* ${pos_info['price']}\n"
+            f"💵 *Баланс:* ${player.balance}",
+            parse_mode="Markdown"
+        )
+    else:
+        await callback.message.answer("❌ Не удалось купить недвижимость!")
+
+async def handle_bank_callback(callback: CallbackQuery, game: MonopolyGame, user_id: int):
+    """Callback для банка"""
+    await callback.message.answer(
+        "🏦 *Выберите операцию:*",
+        parse_mode="Markdown"
+    )
+
+async def handle_end_turn_callback(callback: CallbackQuery, game: MonopolyGame, user_id: int):
+    """Callback для завершения хода"""
+    game.next_turn()
+    await callback.message.answer("✅ *Ход завершен!*", parse_mode="Markdown")
+
+async def handle_leave_callback(callback: CallbackQuery, game: MonopolyGame, user_id: int):
+    """Callback для выхода из игры"""
+    game.remove_player(user_id)
+    await callback.message.answer(
+        "🚪 *Вы вышли из игры!*",
+        parse_mode="Markdown",
+        reply_markup=get_main_reply_keyboard()
+    )
+
+async def handle_game_info_callback(callback: CallbackQuery, game: MonopolyGame):
+    """Callback для информации об игре"""
+    game_state = game.get_game_state()
+    await callback.message.answer(
+        f"🎮 *Игра #{game.id}*\n"
+        f"👥 Игроков: {game_state['players_count']}\n"
+        f"📊 Ход: {game_state['turn_number']}",
+        parse_mode="Markdown"
+    )
+
+async def handle_players_list_callback(callback: CallbackQuery, game: MonopolyGame):
+    """Callback для списка игроков"""
+    players_list = "\n".join([
+        f"• {player.username}: ${player.balance}"
+        for player in game.players.values()
+    ])
+    
+    await callback.message.answer(
+        f"👥 *Игроки:*\n{players_list}",
+        parse_mode="Markdown"
+    )
+
+async def handle_spectate_callback(callback: CallbackQuery, game: MonopolyGame, user_id: int):
+    """Callback для наблюдения"""
+    current_player = game.get_current_player()
+    await callback.message.answer(
+        f"👀 *Наблюдение*\n"
+        f"🎯 Сейчас ходит: {current_player.username if current_player else 'Нет'}",
+        parse_mode="Markdown"
+    )
+
+async def handle_stats_callback(callback: CallbackQuery, game: MonopolyGame):
+    """Callback для статистики"""
+    game_state = game.get_game_state()
+    await callback.message.answer(
+        f"📊 *Статистика игры*\n"
+        f"⏱️ Длительность: {game_state['duration']}с\n"
+        f"👥 Активных: {game_state['active_players']}",
+        parse_mode="Markdown"
+    )
+
+async def handle_back_to_game(callback: CallbackQuery, game: MonopolyGame, user_id: int):
+    """Вернуться к игре"""
+    await callback.message.answer(
+        "🎮 *Возврат к игре...*",
+        parse_mode="Markdown",
+        reply_markup=get_game_reply_keyboard(game, user_id)
+    )
+
+
+==================================================
+📄 ФАЙЛ: handlers/callback_handlers.py
+==================================================
+
+from aiogram import types
+from aiogram.dispatcher import FSMContext
+from core.beautiful_design import BeautifulDesign
+
+async def handle_hide_menu(callback: types.CallbackQuery, state: FSMContext):
+    """Скрыть меню"""
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.answer("Меню скрыто 👁️")
+
+async def handle_show_menu(callback: types.CallbackQuery, state: FSMContext):
+    """Показать меню"""
+    keyboard = BeautifulDesign.create_main_menu()
+    await callback.message.edit_reply_markup(reply_markup=keyboard)
+    await callback.answer("Меню показано ✨")
+
+async def handle_new_game(callback: types.CallbackQuery, state: FSMContext):
+    """Новая игра с красивым интерфейсом"""
+    # Пример данных игры
+    game_data = {
+        "cells": [
+            {"name": "СТАРТ", "type": "go"},
+            {"name": "Балтийская", "type": "property"},
+            {"name": "Казна", "type": "community"},
+            {"name": "Вокзал", "type": "railroad"}
+        ],
+        "balance": 1500000,
+        "properties": 0
+    }
+    
+    game_text = BeautifulDesign.game_board_display(game_data, player_position=1)
+    game_keyboard = BeautifulDesign.create_game_interface({})
+    
+    await callback.message.edit_text(
+        game_text,
+        reply_markup=game_keyboard,
+        parse_mode="HTML"
+    )
+    await callback.answer("Игра началась! 🎲")
+
+async def handle_refresh(callback: types.CallbackQuery, state: FSMContext):
+    """Обновить интерфейс"""
+    await callback.answer("Интерфейс обновлен! 🔄")
+
+async def handle_compact_view(callback: types.CallbackQuery, state: FSMContext):
+    """Компактный вид"""
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.answer("Включен компактный вид 📱")
+
+# Регистрируем обработчики для нового дизайна
+def register_beautiful_handlers(dp):
+    dp.register_callback_query_handler(handle_hide_menu, text="hide_menu")
+    dp.register_callback_query_handler(handle_hide_menu, text="hide_game_menu")
+    dp.register_callback_query_handler(handle_show_menu, text="show_menu")
+    dp.register_callback_query_handler(handle_new_game, text="new_game")
+    dp.register_callback_query_handler(handle_refresh, text="refresh")
+    dp.register_callback_query_handler(handle_compact_view, text="compact_view")
+
+
+==================================================
+📄 ФАЙЛ: handlers/text_handlers.py
+==================================================
+
+def setup_text_handlers(dp, db, active_games):
+    print("Текстовые обработчики настроены")
+
+
+==================================================
+🎯 ДАННЫЕ ИГРОВОГО ПОЛЯ (board.json)
+==================================================
+
+{
+  "positions": [
+    {
+      "id": 0,
+      "name": "рџљЂ РЎС‚Р°СЂС‚",
+      "type": "start",
+      "color": null,
+      "price": 0,
+      "salary": 200,
+      "description": "РќР°С‡Р°Р»Рѕ РїСѓС‚Рё. РџРѕР»СѓС‡РёС‚Рµ 200$ РїСЂРё РїСЂРѕС…РѕР¶РґРµРЅРёРё"
+    },
+    {
+      "id": 1,
+      "name": "рџЊѕ Р–РёС‚РЅР°СЏ",
+      "type": "property",
+      "color": "brown",
+      "price": 60,
+      "rent": [2, 10, 30, 90, 160, 250],
+      "house_price": 50,
+      "hotel_price": 50,
+      "mortgage_value": 30,
+      "description": "РЈР»РёС†Р° РІ С†РµРЅС‚СЂРµ РњРѕСЃРєРІС‹"
+    },
+    {
+      "id": 2,
+      "name": "рџЏ›пёЏ РћР±С‰РµСЃС‚РІРµРЅРЅР°СЏ РєР°Р·РЅР°",
+      "type": "chest",
+      "color": null,
+      "price": 0,
+      "description": "Р’РѕР·СЊРјРёС‚Рµ РєР°СЂС‚РѕС‡РєСѓ"
+    },
+    {
+      "id": 3,
+      "name": "рџЏпёЏ РќР°РіР°С‚РёРЅСЃРєР°СЏ",
+      "type": "property",
+      "color": "brown",
+      "price": 60,
+      "rent": [4, 20, 60, 180, 320, 450],
+      "house_price": 50,
+      "hotel_price": 50,
+      "mortgage_value": 30,
+      "description": "Р–РёР»РѕР№ СЂР°Р№РѕРЅ Сѓ РњРѕСЃРєРІС‹-СЂРµРєРё"
+    },
+    {
+      "id": 4,
+      "name": "рџ’ё РќР°Р»РѕРі РЅР° РґРѕС…РѕРґ",
+      "type": "tax",
+      "color": null,
+      "price": 200,
+      "description": "Р—Р°РїР»Р°С‚РёС‚Рµ 200$"
+    },
+    {
+      "id": 5,
+      "name": "рџљ‚ Р РёР¶СЃРєР°СЏ Р¶/Рґ",
+      "type": "railroad",
+      "color": "rail",
+      "price": 200,
+      "rent": [25, 50, 100, 200],
+      "mortgage_value": 100,
+      "description": "Р–РµР»РµР·РЅРѕРґРѕСЂРѕР¶РЅР°СЏ СЃС‚Р°РЅС†РёСЏ"
+    },
+    {
+      "id": 6,
+      "name": "рџ›ЈпёЏ Р’Р°СЂС€Р°РІСЃРєРѕРµ С€РѕСЃСЃРµ",
+      "type": "property",
+      "color": "lightblue",
+      "price": 100,
+      "rent": [6, 30, 90, 270, 400, 550],
+      "house_price": 50,
+      "hotel_price": 50,
+      "mortgage_value": 50,
+      "description": "Р’Р°Р¶РЅР°СЏ С‚СЂР°РЅСЃРїРѕСЂС‚РЅР°СЏ Р°СЂС‚РµСЂРёСЏ"
+    },
+    {
+      "id": 7,
+      "name": "рџЋІ РЁР°РЅСЃ",
+      "type": "chance",
+      "color": null,
+      "price": 0,
+      "description": "РСЃРїС‹С‚Р°Р№С‚Рµ СѓРґР°С‡Сѓ!"
+    },
+    {
+      "id": 8,
+      "name": "рџҐ¬ РћРіРѕСЂРѕРґРЅС‹Р№ РїСЂРѕСЃРїРµРєС‚",
+      "type": "property",
+      "color": "lightblue",
+      "price": 100,
+      "rent": [6, 30, 90, 270, 400, 550],
+      "house_price": 50,
+      "hotel_price": 50,
+      "mortgage_value": 50,
+      "description": "Р—РµР»РµРЅС‹Р№ СЂР°Р№РѕРЅ РњРѕСЃРєРІС‹"
+    },
+    {
+      "id": 9,
+      "name": "в›Є Р РёР¶СЃРєР°СЏ",
+      "type": "property",
+      "color": "lightblue",
+      "price": 120,
+      "rent": [8, 40, 100, 300, 450, 600],
+      "house_price": 50,
+      "hotel_price": 50,
+      "mortgage_value": 60,
+      "description": "РСЃС‚РѕСЂРёС‡РµСЃРєРёР№ СЂР°Р№РѕРЅ"
+    },
+    {
+      "id": 10,
+      "name": "рџ‘® РўСЋСЂСЊРјР° (РїРѕСЃРµС‰РµРЅРёРµ)",
+      "type": "jail_visit",
+      "color": null,
+      "price": 0,
+      "description": "РџСЂРѕСЃС‚Рѕ Р·Р°РіР»СЏРЅРёС‚Рµ"
+    },
+    {
+      "id": 11,
+      "name": "рџЏ­ РљСѓСЂСЃРєР°СЏ",
+      "type": "property",
+      "color": "pink",
+      "price": 140,
+      "rent": [10, 50, 150, 450, 625, 750],
+      "house_price": 100,
+      "hotel_price": 100,
+      "mortgage_value": 70,
+      "description": "РџСЂРѕРјС‹С€Р»РµРЅРЅС‹Р№ СЂР°Р№РѕРЅ"
+    },
+    {
+      "id": 12,
+      "name": "вљЎ Р­Р»РµРєС‚СЂРѕСЃРµС‚СЊ",
+      "type": "utility",
+      "color": "utility",
+      "price": 150,
+      "multiplier": [4, 10],
+      "mortgage_value": 75,
+      "description": "Р­РЅРµСЂРіРµС‚РёС‡РµСЃРєР°СЏ РєРѕРјРїР°РЅРёСЏ"
+    },
+    {
+      "id": 13,
+      "name": "рџЊІ РђР±СЂР°РјС†РµРІРѕ",
+      "type": "property",
+      "color": "pink",
+      "price": 140,
+      "rent": [10, 50, 150, 450, 625, 750],
+      "house_price": 100,
+      "hotel_price": 100,
+      "mortgage_value": 70,
+      "description": "Р—Р°РіРѕСЂРѕРґРЅР°СЏ СѓСЃР°РґСЊР±Р°"
+    },
+    {
+      "id": 14,
+      "name": "рџЏҐ РџР°РЅС‚РµР»РµРµРІСЃРєР°СЏ",
+      "type": "property",
+      "color": "pink",
+      "price": 160,
+      "rent": [12, 60, 180, 500, 700, 900],
+      "house_price": 100,
+      "hotel_price": 100,
+      "mortgage_value": 80,
+      "description": "РЈР»РёС†Р° СЃ РјРµРґРёС†РёРЅСЃРєРёРјРё СѓС‡СЂРµР¶РґРµРЅРёСЏРјРё"
+    },
+    {
+      "id": 15,
+      "name": "рџљ‚ РљР°Р·Р°РЅСЃРєР°СЏ Р¶/Рґ",
+      "type": "railroad",
+      "color": "rail",
+      "price": 200,
+      "rent": [25, 50, 100, 200],
+      "mortgage_value": 100,
+      "description": "Р’РѕРєР·Р°Р» РЅР°РїСЂР°РІР»РµРЅРёСЏ РљР°Р·Р°РЅСЊ"
+    },
+    {
+      "id": 16,
+      "name": "рџ”¬ Р’Р°РІРёР»РѕРІР°",
+      "type": "property",
+      "color": "orange",
+      "price": 180,
+      "rent": [14, 70, 200, 550, 750, 950],
+      "house_price": 100,
+      "hotel_price": 100,
+      "mortgage_value": 90,
+      "description": "РЈР»РёС†Р° СѓС‡РµРЅС‹С…"
+    },
+    {
+      "id": 17,
+      "name": "рџЏ›пёЏ РћР±С‰РµСЃС‚РІРµРЅРЅР°СЏ РєР°Р·РЅР°",
+      "type": "chest",
+      "color": null,
+      "price": 0,
+      "description": "Р’РѕР·СЊРјРёС‚Рµ РєР°СЂС‚РѕС‡РєСѓ"
+    },
+    {
+      "id": 18,
+      "name": "рџЊі РўРёРјРёСЂСЏР·РµРІСЃРєР°СЏ",
+      "type": "property",
+      "color": "orange",
+      "price": 180,
+      "rent": [14, 70, 200, 550, 750, 950],
+      "house_price": 100,
+      "hotel_price": 100,
+      "mortgage_value": 90,
+      "description": "Р—РѕРЅР° РѕС‚РґС‹С…Р° Рё РїР°СЂРєРѕРІ"
+    },
+    {
+      "id": 19,
+      "name": "рџЏпёЏ Р›РёС…РѕР±РѕСЂС‹",
+      "type": "property",
+      "color": "orange",
+      "price": 200,
+      "rent": [16, 80, 220, 600, 800, 1000],
+      "house_price": 100,
+      "hotel_price": 100,
+      "mortgage_value": 100,
+      "description": "РЎРїР°Р»СЊРЅС‹Р№ СЂР°Р№РѕРЅ"
+    },
+    {
+      "id": 20,
+      "name": "рџ…їпёЏ Р‘РµСЃРїР»Р°С‚РЅР°СЏ СЃС‚РѕСЏРЅРєР°",
+      "type": "free_parking",
+      "color": null,
+      "price": 0,
+      "description": "РћС‚РґРѕС…РЅРёС‚Рµ Р±РµСЃРїР»Р°С‚РЅРѕ"
+    },
+    {
+      "id": 21,
+      "name": "рџ›ЌпёЏ РђСЂР±Р°С‚",
+      "type": "property",
+      "color": "red",
+      "price": 220,
+      "rent": [18, 90, 250, 700, 875, 1050],
+      "house_price": 150,
+      "hotel_price": 150,
+      "mortgage_value": 110,
+      "description": "РџРµС€РµС…РѕРґРЅР°СЏ СѓР»РёС†Р°, С†РµРЅС‚СЂ С‚РѕСЂРіРѕРІР»Рё"
+    },
+    {
+      "id": 22,
+      "name": "рџЋІ РЁР°РЅСЃ",
+      "type": "chance",
+      "color": null,
+      "price": 0,
+      "description": "РСЃРїС‹С‚Р°Р№С‚Рµ СѓРґР°С‡Сѓ!"
+    },
+    {
+      "id": 23,
+      "name": "рџЊ‰ РџРѕР»СЏРЅРєР°",
+      "type": "property",
+      "color": "red",
+      "price": 220,
+      "rent": [18, 90, 250, 700, 875, 1050],
+      "house_price": 150,
+      "hotel_price": 150,
+      "mortgage_value": 110,
+      "description": "РСЃС‚РѕСЂРёС‡РµСЃРєРёР№ СЂР°Р№РѕРЅ Сѓ СЂРµРєРё"
+    },
+    {
+      "id": 24,
+      "name": "рџЏ›пёЏ РЎСЂРµС‚РµРЅРєР°",
+      "type": "property",
+      "color": "red",
+      "price": 240,
+      "rent": [20, 100, 300, 750, 925, 1100],
+      "house_price": 150,
+      "hotel_price": 150,
+      "mortgage_value": 120,
+      "description": "Р¦РµРЅС‚СЂР°Р»СЊРЅР°СЏ СѓР»РёС†Р° СЃ РёСЃС‚РѕСЂРёРµР№"
+    },
+    {
+      "id": 25,
+      "name": "рџљ‚ РљСѓСЂСЃРєР°СЏ Р¶/Рґ",
+      "type": "railroad",
+      "color": "rail",
+      "price": 200,
+      "rent": [25, 50, 100, 200],
+      "mortgage_value": 100,
+      "description": "РљСЂСѓРїРЅС‹Р№ С‚СЂР°РЅСЃРїРѕСЂС‚РЅС‹Р№ СѓР·РµР»"
+    },
+    {
+      "id": 26,
+      "name": "рџЏЁ Р РѕСЃС‚РѕРІСЃРєР°СЏ",
+      "type": "property",
+      "color": "yellow",
+      "price": 260,
+      "rent": [22, 110, 330, 800, 975, 1150],
+      "house_price": 150,
+      "hotel_price": 150,
+      "mortgage_value": 130,
+      "description": "Р“РѕСЃС‚РёРЅРёС‡РЅС‹Р№ СЂР°Р№РѕРЅ"
+    },
+    {
+      "id": 27,
+      "name": "рџЏў Р СЏР·Р°РЅСЃРєРёР№ РїСЂРѕСЃРїРµРєС‚",
+      "type": "property",
+      "color": "yellow",
+      "price": 260,
+      "rent": [22, 110, 330, 800, 975, 1150],
+      "house_price": 150,
+      "hotel_price": 150,
+      "mortgage_value": 130,
+      "description": "Р”РµР»РѕРІРѕР№ СЂР°Р№РѕРЅ"
+    },
+    {
+      "id": 28,
+      "name": "рџ’§ Р’РѕРґРѕРїСЂРѕРІРѕРґ",
+      "type": "utility",
+      "color": "utility",
+      "price": 150,
+      "multiplier": [4, 10],
+      "mortgage_value": 75,
+      "description": "Р’РѕРґРѕСЃРЅР°Р±Р¶Р°СЋС‰Р°СЏ РєРѕРјРїР°РЅРёСЏ"
+    },
+    {
+      "id": 29,
+      "name": "рџЊі РќРѕРІРёРЅСЃРєРёР№ Р±СѓР»СЊРІР°СЂ",
+      "type": "property",
+      "color": "yellow",
+      "price": 280,
+      "rent": [24, 120, 360, 850, 1025, 1200],
+      "house_price": 150,
+      "hotel_price": 150,
+      "mortgage_value": 140,
+      "description": "РџР°СЂРєРѕРІР°СЏ Р·РѕРЅР° РґР»СЏ РїСЂРѕРіСѓР»РѕРє"
+    },
+    {
+      "id": 30,
+      "name": "рџљЁ РћС‚РїСЂР°РІР»СЏР№С‚РµСЃСЊ РІ С‚СЋСЂСЊРјСѓ",
+      "type": "go_to_jail",
+      "color": null,
+      "price": 0,
+      "description": "РџСЂСЏРјРѕ РІ РєР°РјРµСЂСѓ!"
+    },
+    {
+      "id": 31,
+      "name": "рџ“љ РџСѓС€РєРёРЅСЃРєР°СЏ",
+      "type": "property",
+      "color": "green",
+      "price": 300,
+      "rent": [26, 130, 390, 900, 1100, 1275],
+      "house_price": 200,
+      "hotel_price": 200,
+      "mortgage_value": 150,
+      "description": "РљСѓР»СЊС‚СѓСЂРЅС‹Р№ С†РµРЅС‚СЂ СЃ Р±РёР±Р»РёРѕС‚РµРєР°РјРё"
+    },
+    {
+      "id": 32,
+      "name": "рџ’ј РўРІРµСЂСЃРєР°СЏ",
+      "type": "property",
+      "color": "green",
+      "price": 300,
+      "rent": [26, 130, 390, 900, 1100, 1275],
+      "house_price": 200,
+      "hotel_price": 200,
+      "mortgage_value": 150,
+      "description": "Р“Р»Р°РІРЅР°СЏ СѓР»РёС†Р° РњРѕСЃРєРІС‹"
+    },
+    {
+      "id": 33,
+      "name": "рџЏ›пёЏ РћР±С‰РµСЃС‚РІРµРЅРЅР°СЏ РєР°Р·РЅР°",
+      "type": "chest",
+      "color": null,
+      "price": 0,
+      "description": "Р’РѕР·СЊРјРёС‚Рµ РєР°СЂС‚РѕС‡РєСѓ"
+    },
+    {
+      "id": 34,
+      "name": "рџЋ­ РњР°СЏРєРѕРІСЃРєРѕРіРѕ",
+      "type": "property",
+      "color": "green",
+      "price": 320,
+      "rent": [28, 150, 450, 1000, 1200, 1400],
+      "house_price": 200,
+      "hotel_price": 200,
+      "mortgage_value": 160,
+      "description": "РўРµР°С‚СЂР°Р»СЊРЅР°СЏ СѓР»РёС†Р°"
+    },
+    {
+      "id": 35,
+      "name": "рџљ‚ Р›РµРЅРёРЅРіСЂР°РґСЃРєР°СЏ Р¶/Рґ",
+      "type": "railroad",
+      "color": "rail",
+      "price": 200,
+      "rent": [25, 50, 100, 200],
+      "mortgage_value": 100,
+      "description": "РџСѓС‚СЊ РЅР° РЎР°РЅРєС‚-РџРµС‚РµСЂР±СѓСЂРі"
+    },
+    {
+      "id": 36,
+      "name": "рџЋІ РЁР°РЅСЃ",
+      "type": "chance",
+      "color": null,
+      "price": 0,
+      "description": "РСЃРїС‹С‚Р°Р№С‚Рµ СѓРґР°С‡Сѓ!"
+    },
+    {
+      "id": 37,
+      "name": "рџЏ° РљСѓС‚СѓР·РѕРІСЃРєРёР№ РїСЂРѕСЃРїРµРєС‚",
+      "type": "property",
+      "color": "darkblue",
+      "price": 350,
+      "rent": [35, 175, 500, 1100, 1300, 1500],
+      "house_price": 200,
+      "hotel_price": 200,
+      "mortgage_value": 175,
+      "description": "Р­Р»РёС‚РЅС‹Р№ Р¶РёР»РѕР№ СЂР°Р№РѕРЅ"
+    },
+    {
+      "id": 38,
+      "name": "рџ’Ћ РќР°Р»РѕРі РЅР° СЂРѕСЃРєРѕС€СЊ",
+      "type": "tax",
+      "color": null,
+      "price": 100,
+      "description": "Р—Р°РїР»Р°С‚РёС‚Рµ 100$ Р·Р° Р±РѕРіР°С‚СЃС‚РІРѕ"
+    },
+    {
+      "id": 39,
+      "name": "рџЊџ Р‘СЂРѕРґРІРµР№",
+      "type": "property",
+      "color": "darkblue",
+      "price": 400,
+      "rent": [50, 200, 600, 1400, 1700, 2000],
+      "house_price": 200,
+      "hotel_price": 200,
+      "mortgage_value": 200,
+      "description": "РЎР°РјР°СЏ РґРѕСЂРѕРіР°СЏ СѓР»РёС†Р°!"
+    }
+  ],
+  "colors": {
+    "brown": {
+      "name": "РљРѕСЂРёС‡РЅРµРІС‹Р№",
+      "hex": "#8B4513",
+      "set_size": 2,
+      "house_limit": 4,
+      "description": "РЎР°РјС‹Рµ РґРµС€РµРІС‹Рµ СѓР»РёС†С‹"
+    },
+    "lightblue": {
+      "name": "Р“РѕР»СѓР±РѕР№",
+      "hex": "#87CEEB",
+      "set_size": 3,
+      "house_limit": 4,
+      "description": "Р”РѕСЃС‚СѓРїРЅР°СЏ РЅРµРґРІРёР¶РёРјРѕСЃС‚СЊ"
+    },
+    "pink": {
+      "name": "Р РѕР·РѕРІС‹Р№",
+      "hex": "#FF69B4",
+      "set_size": 3,
+      "house_limit": 4,
+      "description": "РЎСЂРµРґРЅРёР№ РєР»Р°СЃСЃ"
+    },
+    "orange": {
+      "name": "РћСЂР°РЅР¶РµРІС‹Р№",
+      "hex": "#FFA500",
+      "set_size": 3,
+      "house_limit": 4,
+      "description": "РљРѕРјС„РѕСЂС‚РЅС‹Рµ СЂР°Р№РѕРЅС‹"
+    },
+    "red": {
+      "name": "РљСЂР°СЃРЅС‹Р№",
+      "hex": "#FF0000",
+      "set_size": 3,
+      "house_limit": 4,
+      "description": "РџСЂРµСЃС‚РёР¶РЅС‹Рµ СѓР»РёС†С‹"
+    },
+    "yellow": {
+      "name": "Р–РµР»С‚С‹Р№",
+      "hex": "#FFFF00",
+      "set_size": 3,
+      "house_limit": 4,
+      "description": "Р”РµР»РѕРІС‹Рµ СЂР°Р№РѕРЅС‹"
+    },
+    "green": {
+      "name": "Р—РµР»РµРЅС‹Р№",
+      "hex": "#00FF00",
+      "set_size": 3,
+      "house_limit": 4,
+      "description": "Р­Р»РёС‚РЅС‹Рµ РєРІР°СЂС‚Р°Р»С‹"
+    },
+    "darkblue": {
+      "name": "РўРµРјРЅРѕ-СЃРёРЅРёР№",
+      "hex": "#00008B",
+      "set_size": 2,
+      "house_limit": 4,
+      "description": "Р›СЋРєСЃ-РЅРµРґРІРёР¶РёРјРѕСЃС‚СЊ"
+    },
+    "rail": {
+      "name": "Р–РµР»РµР·РЅР°СЏ РґРѕСЂРѕРіР°",
+      "hex": "#808080",
+      "set_size": 4,
+      "house_limit": 0,
+      "description": "РўСЂР°РЅСЃРїРѕСЂС‚РЅС‹Рµ РєРѕРјРїР°РЅРёРё"
+    },
+    "utility": {
+      "name": "РљРѕРјРјСѓРЅР°Р»СЊРЅРѕРµ РїСЂРµРґРїСЂРёСЏС‚РёРµ",
+      "hex": "#000000",
+      "set_size": 2,
+      "house_limit": 0,
+      "description": "Р­РЅРµСЂРіРµС‚РёРєР° Рё РІРѕРґР°"
+    }
+  }
+}
+
+
+==================================================
+🎲 КАРТОЧКИ ШАНСА (chance-cards.json)
+==================================================
+
+{
+  "chance": [
+    {
+      "card_id": "chance_1",
+      "text": "рџЋЇ РџСЂСЏРјРѕР№ РІС‹СЃС‚СЂРµР»! РџРµСЂРµРјРµСЃС‚РёС‚РµСЃСЊ РЅР° РЎС‚Р°СЂС‚",
+      "action": "move_to",
+      "position": 0,
+      "position_name": "РЎС‚Р°СЂС‚"
+    },
+    {
+      "card_id": "chance_2",
+      "text": "рџЏў Р”РµР»РѕРІР°СЏ РІСЃС‚СЂРµС‡Р° РЅР° РђСЂР±Р°С‚Рµ. РћС‚РїСЂР°РІР»СЏР№С‚РµСЃСЊ С‚СѓРґР°",
+      "action": "move_to",
+      "position": 21,
+      "position_name": "РђСЂР±Р°С‚"
+    },
+    {
+      "card_id": "chance_3",
+      "text": "рџЋ­ Р’Р°СЃ РїСЂРёРіР»Р°СЃРёР»Рё РІ С‚РµР°С‚СЂ РЅР° РџСѓС€РєРёРЅСЃРєРѕР№",
+      "action": "move_to",
+      "position": 31,
+      "position_name": "РџСѓС€РєРёРЅСЃРєР°СЏ"
+    },
+    {
+      "card_id": "chance_4",
+      "text": "рџљ‚ РЎСЂРѕС‡РЅР°СЏ РґРµР»РѕРІР°СЏ РїРѕРµР·РґРєР°. РќР° Р±Р»РёР¶Р°Р№С€СѓСЋ Р¶РµР»РµР·РЅСѓСЋ РґРѕСЂРѕРіСѓ!",
+      "action": "move_to_nearest",
+      "target_type": "railroad"
+    },
+    {
+      "card_id": "chance_5",
+      "text": "вљЎ РђРІР°СЂРёСЏ РЅР° Р»РёРЅРёРё. РџСЂРѕРІРµСЂСЊС‚Рµ Р±Р»РёР¶Р°Р№С€РµРµ РєРѕРјРјСѓРЅР°Р»СЊРЅРѕРµ РїСЂРµРґРїСЂРёСЏС‚РёРµ",
+      "action": "move_to_nearest",
+      "target_type": "utility"
+    },
+    {
+      "card_id": "chance_6",
+      "text": "рџ”™ Р§С‚Рѕ-С‚Рѕ Р·Р°Р±С‹Р»Рё? Р’РµСЂРЅРёС‚РµСЃСЊ РЅР° С‚СЂРё С€Р°РіР° РЅР°Р·Р°Рґ",
+      "action": "move_steps",
+      "steps": -3
+    },
+    {
+      "card_id": "chance_7",
+      "text": "рџ’° Р‘Р°РЅРєРѕРІСЃРєРёРµ РґРёРІРёРґРµРЅРґС‹! РџРѕР»СѓС‡РёС‚Рµ 50$",
+      "action": "collect_money",
+      "amount": 50
+    },
+    {
+      "card_id": "chance_8",
+      "text": "рџ‘‘ РџРѕР±РµРґРёС‚РµР»СЊ РєРѕРЅРєСѓСЂСЃР° РєСЂР°СЃРѕС‚С‹! Р’Р°С€ РїСЂРёР·: 10$",
+      "action": "collect_money",
+      "amount": 10
+    },
+    {
+      "card_id": "chance_9",
+      "text": "рџ“‰ РџСЂРѕРґР°Р»Рё Р°РєС†РёРё СЃ СѓР±С‹С‚РєРѕРј. Р—Р°РїР»Р°С‚РёС‚Рµ 50$",
+      "action": "pay_money",
+      "amount": 50
+    },
+    {
+      "card_id": "chance_10",
+      "text": "рџ’Ћ РќР°Р»РѕРі РЅР° СЂРѕСЃРєРѕС€СЊ. РћС‚РґР°Р№С‚Рµ 100$ РіРѕСЃСѓРґР°СЂСЃС‚РІСѓ",
+      "action": "pay_money",
+      "amount": 100
+    },
+    {
+      "card_id": "chance_11",
+      "text": "рџљЁ РќР°СЂСѓС€РёР»Рё РїСЂР°РІРёР»Р°! РћС‚РїСЂР°РІР»СЏР№С‚РµСЃСЊ РІ С‚СЋСЂСЊРјСѓ!",
+      "action": "go_to_jail"
+    },
+    {
+      "card_id": "chance_12",
+      "text": "рџЋ« РљР°СЂС‚Р° 'Р’С‹Р№С‚Рё РёР· С‚СЋСЂСЊРјС‹ Р±РµСЃРїР»Р°С‚РЅРѕ'. РЎРѕС…СЂР°РЅРёС‚Рµ РґР»СЏ Р±СѓРґСѓС‰РµРіРѕ",
+      "action": "get_out_of_jail_free"
+    },
+    {
+      "card_id": "chance_13",
+      "text": "рџ”Ё Р РµРјРѕРЅС‚ С„Р°СЃР°РґРѕРІ. Р—Р° РєР°Р¶РґС‹Р№ РґРѕРј 25$, Р·Р° РѕС‚РµР»СЊ 100$",
+      "action": "repairs",
+      "house_cost": 25,
+      "hotel_cost": 100
+    },
+    {
+      "card_id": "chance_14",
+      "text": "рџЋ‚ РЎ РґРЅРµРј СЂРѕР¶РґРµРЅРёСЏ! Р’СЃРµ РёРіСЂРѕРєРё РґР°СЂСЏС‚ РІР°Рј РїРѕ 10$",
+      "action": "collect_from_players",
+      "amount": 10
+    },
+    {
+      "card_id": "chance_15",
+      "text": "рџ‘ЁвЂЌвљ–пёЏ Р’Р°СЃ РёР·Р±СЂР°Р»Рё РїСЂРµРґСЃРµРґР°С‚РµР»РµРј. РЈРіРѕСЃС‚РёС‚Рµ РІСЃРµС… РЅР° 50$",
+      "action": "pay_to_players",
+      "amount": 50
+    },
+    {
+      "card_id": "chance_16",
+      "text": "рџљ— РЁС‚СЂР°С„ Р·Р° РїР°СЂРєРѕРІРєСѓ РІ РЅРµРїРѕР»РѕР¶РµРЅРЅРѕРј РјРµСЃС‚Рµ: 15$",
+      "action": "pay_money",
+      "amount": 15
+    },
+    {
+      "card_id": "chance_17",
+      "text": "рџЋ–пёЏ Р’С‹РёРіСЂР°Р»Рё РѕР»РёРјРїРёР°РґСѓ РїРѕ РјР°С‚РµРјР°С‚РёРєРµ! РџРѕР»СѓС‡РёС‚Рµ 100$",
+      "action": "collect_money",
+      "amount": 100
+    },
+    {
+      "card_id": "chance_18",
+      "text": "рџ“љ РћРїР»Р°С‚Р° РєСѓСЂСЃРѕРІ РїРѕРІС‹С€РµРЅРёСЏ РєРІР°Р»РёС„РёРєР°С†РёРё: 75$",
+      "action": "pay_money",
+      "amount": 75
+    },
+    {
+      "card_id": "chance_19",
+      "text": "рџЋ° Р’С‹РёРіСЂС‹С€ РІ РєР°Р·РёРЅРѕ! Р—Р°Р±РµСЂРёС‚Рµ 200$",
+      "action": "collect_money",
+      "amount": 200
+    },
+    {
+      "card_id": "chance_20",
+      "text": "рџЏҐ Р›РµС‡РµРЅРёРµ Р·СѓР±РѕРІ РѕР±РѕС€Р»РѕСЃСЊ РІ 85$",
+      "action": "pay_money",
+      "amount": 85
+    },
+    {
+      "card_id": "chance_21",
+      "text": "рџЋЃ РќР°С€Р»Рё РєР»Р°Рґ! РџРѕР»СѓС‡РёС‚Рµ 150$",
+      "action": "collect_money",
+      "amount": 150
+    },
+    {
+      "card_id": "chance_22",
+      "text": "рџ”Ґ РџРѕР¶Р°СЂ РІ РѕС‚РµР»Рµ! Р РµРјРѕРЅС‚ РѕР±РѕС€РµР»СЃСЏ РІ 120$",
+      "action": "pay_money",
+      "amount": 120
+    },
+    {
+      "card_id": "chance_23",
+      "text": "рџ“€ РЈРґР°С‡РЅР°СЏ РёРЅРІРµСЃС‚РёС†РёСЏ! Р”РёРІРёРґРµРЅРґС‹ 80$",
+      "action": "collect_money",
+      "amount": 80
+    },
+    {
+      "card_id": "chance_24",
+      "text": "рџ’ё РњРѕС€РµРЅРЅРёРєРё СѓРєСЂР°Р»Рё 65$ СЃ РІР°С€РµРіРѕ СЃС‡РµС‚Р°",
+      "action": "pay_money",
+      "amount": 65
+    },
+    {
+      "card_id": "chance_25",
+      "text": "рџЋЇ РџРѕРїР°РґР°РЅРёРµ РІ С‚РѕС‡РєСѓ! РџРµСЂРµРјРµСЃС‚РёС‚РµСЃСЊ РЅР° РўРІРµСЂСЃРєСѓСЋ",
+      "action": "move_to",
+      "position": 32,
+      "position_name": "РўРІРµСЂСЃРєР°СЏ"
+    },
+    {
+      "card_id": "chance_26",
+      "text": "рџљЂ РџСЂРѕСЂС‹РІ РІ С‚РµС…РЅРѕР»РѕРіРёРё! Р’Р°С€Рё Р°РєС†РёРё РІС‹СЂРѕСЃР»Рё. РџРѕР»СѓС‡РёС‚Рµ 90$",
+      "action": "collect_money",
+      "amount": 90
+    },
+    {
+      "card_id": "chance_27",
+      "text": "рџЊЄпёЏ РЈСЂР°РіР°РЅ РїРѕРІСЂРµРґРёР» РєСЂС‹С€Рё. Р РµРјРѕРЅС‚: 110$",
+      "action": "pay_money",
+      "amount": 110
+    },
+    {
+      "card_id": "chance_28",
+      "text": "рџЏ† РџРѕР±РµРґР° РІ С€Р°С…РјР°С‚РЅРѕРј С‚СѓСЂРЅРёСЂРµ! РџСЂРёР·: 70$",
+      "action": "collect_money",
+      "amount": 70
+    },
+    {
+      "card_id": "chance_29",
+      "text": "рџ“‰ Р‘РёСЂР¶РµРІРѕР№ РєСЂР°С…. РџРѕС‚РµСЂСЏР»Рё 95$",
+      "action": "pay_money",
+      "amount": 95
+    },
+    {
+      "card_id": "chance_30",
+      "text": "рџЋЁ РџСЂРѕРґР°Р»Рё РєР°СЂС‚РёРЅСѓ РЅР° Р°СѓРєС†РёРѕРЅРµ! РџРѕР»СѓС‡РёС‚Рµ 180$",
+      "action": "collect_money",
+      "amount": 180
+    }
+  ],
+  "chest": [
+    {
+      "card_id": "chest_1",
+      "text": "рџљЂ РќРѕРІС‹Рµ РіРѕСЂРёР·РѕРЅС‚С‹! РћС‚РїСЂР°РІР»СЏР№С‚РµСЃСЊ РЅР° РЎС‚Р°СЂС‚",
+      "action": "move_to",
+      "position": 0,
+      "position_name": "РЎС‚Р°СЂС‚"
+    },
+    {
+      "card_id": "chest_2",
+      "text": "вљ–пёЏ РќР°СЂСѓС€РµРЅРёРµ РєРѕРЅС‚СЂР°РєС‚Р°. РўСЋСЂСЊРјР°!",
+      "action": "go_to_jail"
+    },
+    {
+      "card_id": "chest_3",
+      "text": "рџ’ј РћС€РёР±РєР° РІ РІР°С€Сѓ РїРѕР»СЊР·Сѓ РІ Р±Р°РЅРєРµ! РџРѕР»СѓС‡РёС‚Рµ 200$",
+      "action": "collect_money",
+      "amount": 200
+    },
+    {
+      "card_id": "chest_4",
+      "text": "рџ‘‘ Р’С‚РѕСЂРѕРµ РјРµСЃС‚Рѕ РІ РєРѕРЅРєСѓСЂСЃРµ С‚Р°Р»Р°РЅС‚РѕРІ: 10$",
+      "action": "collect_money",
+      "amount": 10
+    },
+    {
+      "card_id": "chest_5",
+      "text": "рџ“Љ Р’РѕР·РІСЂР°С‚ РЅР°Р»РѕРіРѕРІ! РџРѕР»СѓС‡РёС‚Рµ 20$",
+      "action": "collect_money",
+      "amount": 20
+    },
+    {
+      "card_id": "chest_6",
+      "text": "рџ“њ РќР°СЃР»РµРґСЃС‚РІРѕ РѕС‚ РґР°Р»СЊРЅРµРіРѕ СЂРѕРґСЃС‚РІРµРЅРЅРёРєР°: 100$",
+      "action": "collect_money",
+      "amount": 100
+    },
+    {
+      "card_id": "chest_7",
+      "text": "рџЏ¦ РџСЂРѕС†РµРЅС‚С‹ РїРѕ РІРєР»Р°РґСѓ: 50$",
+      "action": "collect_money",
+      "amount": 50
+    },
+    {
+      "card_id": "chest_8",
+      "text": "рџЋ« Р’С‹РёРіСЂС‹С€ РІ Р»РѕС‚РµСЂРµСЋ: 100$",
+      "action": "collect_money",
+      "amount": 100
+    },
+    {
+      "card_id": "chest_9",
+      "text": "рџЏҐ РћРїР»Р°С‚Р° Р»РµС‡РµРЅРёСЏ РІ С‡Р°СЃС‚РЅРѕР№ РєР»РёРЅРёРєРµ: 100$",
+      "action": "pay_money",
+      "amount": 100
+    },
+    {
+      "card_id": "chest_10",
+      "text": "рџЋ“ РћР±СѓС‡РµРЅРёРµ РІ РїСЂРµСЃС‚РёР¶РЅРѕРј РІСѓР·Рµ: 150$",
+      "action": "pay_money",
+      "amount": 150
+    },
+    {
+      "card_id": "chest_11",
+      "text": "рџ’Ў РЎС‡РµС‚ Р·Р° СЌР»РµРєС‚СЂРёС‡РµСЃС‚РІРѕ: 50$",
+      "action": "pay_money",
+      "amount": 50
+    },
+    {
+      "card_id": "chest_12",
+      "text": "рџљ— РЁС‚СЂР°С„ Р·Р° РїР°СЂРєРѕРІРєСѓ: 10$",
+      "action": "pay_money",
+      "amount": 10
+    },
+    {
+      "card_id": "chest_13",
+      "text": "рџ‘ЁвЂЌвљ•пёЏ РЈСЃР»СѓРіРё РІСЂР°С‡Р°: 50$",
+      "action": "pay_money",
+      "amount": 50
+    },
+    {
+      "card_id": "chest_14",
+      "text": "рџ”“ РљР°СЂС‚Р° 'Р’С‹Р№С‚Рё РёР· С‚СЋСЂСЊРјС‹ Р±РµСЃРїР»Р°С‚РЅРѕ'. РџСЂРёРіРѕРґРёС‚СЃСЏ!",
+      "action": "get_out_of_jail_free"
+    },
+    {
+      "card_id": "chest_15",
+      "text": "рџЋ„ Р РѕР¶РґРµСЃС‚РІРµРЅСЃРєРёР№ СЃР±РѕСЂ. РљР°Р¶РґС‹Р№ РґР°РµС‚ РІР°Рј 20$",
+      "action": "collect_from_players",
+      "amount": 20
+    },
+    {
+      "card_id": "chest_16",
+      "text": "рџЌѕ РЈСЃС‚СЂРѕРёР»Рё РїСЂРёРµРј. РЈРіРѕСЃС‚РёС‚Рµ РІСЃРµС… РЅР° 50$",
+      "action": "pay_to_players",
+      "amount": 50
+    },
+    {
+      "card_id": "chest_17",
+      "text": "рџ“љ РџСЂРѕРґР°Р»Рё СЃС‚Р°СЂС‹Рµ СѓС‡РµР±РЅРёРєРё: 25$",
+      "action": "collect_money",
+      "amount": 25
+    },
+    {
+      "card_id": "chest_18",
+      "text": "рџљ— Р РµРјРѕРЅС‚ Р°РІС‚РѕРјРѕР±РёР»СЏ: 75$",
+      "action": "pay_money",
+      "amount": 75
+    },
+    {
+      "card_id": "chest_19",
+      "text": "рџЋЃ РџРѕРґР°СЂРѕРє РЅР° СЋР±РёР»РµР№: 60$",
+      "action": "collect_money",
+      "amount": 60
+    },
+    {
+      "card_id": "chest_20",
+      "text": "рџЊі РћР·РµР»РµРЅРµРЅРёРµ СѓС‡Р°СЃС‚РєР°: 40$",
+      "action": "pay_money",
+      "amount": 40
+    },
+    {
+      "card_id": "chest_21",
+      "text": "рџЏ† РџСЂРёР· Р·Р° РёР·РѕР±СЂРµС‚РµРЅРёРµ: 120$",
+      "action": "collect_money",
+      "amount": 120
+    },
+    {
+      "card_id": "chest_22",
+      "text": "рџ’ј Р®СЂРёРґРёС‡РµСЃРєРёРµ СѓСЃР»СѓРіРё: 90$",
+      "action": "pay_money",
+      "amount": 90
+    },
+    {
+      "card_id": "chest_23",
+      "text": "рџЋЁ РџСЂРѕРґР°Р¶Р° РєРѕР»Р»РµРєС†РёРё РјР°СЂРѕРє: 80$",
+      "action": "collect_money",
+      "amount": 80
+    },
+    {
+      "card_id": "chest_24",
+      "text": "вљЎ Р РµРјРѕРЅС‚ РїСЂРѕРІРѕРґРєРё: 70$",
+      "action": "pay_money",
+      "amount": 70
+    },
+    {
+      "card_id": "chest_25",
+      "text": "рџ“€ Р”РёРІРёРґРµРЅРґС‹ РїРѕ Р°РєС†РёСЏРј: 110$",
+      "action": "collect_money",
+      "amount": 110
+    },
+    {
+      "card_id": "chest_26",
+      "text": "рџЏ  РЎС‚СЂР°С…РѕРІР°РЅРёРµ РёРјСѓС‰РµСЃС‚РІР°: 130$",
+      "action": "pay_money",
+      "amount": 130
+    },
+    {
+      "card_id": "chest_27",
+      "text": "рџЋ­ Р“РѕРЅРѕСЂР°СЂ Р·Р° РІС‹СЃС‚СѓРїР»РµРЅРёРµ: 95$",
+      "action": "collect_money",
+      "amount": 95
+    },
+    {
+      "card_id": "chest_28",
+      "text": "рџ”§ РўРµС…РѕР±СЃР»СѓР¶РёРІР°РЅРёРµ: 55$",
+      "action": "pay_money",
+      "amount": 55
+    },
+    {
+      "card_id": "chest_29",
+      "text": "рџ’Ћ РќР°С€Р»Рё Р°РЅС‚РёРєРІР°СЂРёР°С‚: 140$",
+      "action": "collect_money",
+      "amount": 140
+    },
+    {
+      "card_id": "chest_30",
+      "text": "рџљї Р РµРјРѕРЅС‚ СЃР°РЅС‚РµС…РЅРёРєРё: 65$",
+      "action": "pay_money",
+      "amount": 65
+    }
+  ]
+}
+
+==================================================
+📦 ЗАВИСИМОСТИ (requirements.txt)
+==================================================
+
+aiogram==2.25.1
+flask==2.3.3
+python-dotenv==1.0.0
+requests==2.28.2
+# aiohttp удален из-за несовместимости с Python 3.13 на Render
+
+
+==================================================
+⚙️  КОНФИГ: Procfile
+==================================================
+
+web: python main.py
+
+
+==================================================
+⚙️  КОНФИГ: render.yaml
+==================================================
+
+services:
+  - type: web
+    name: monopoly-bot
+    env: python
+    plan: free
+    region: frankfurt
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.12
+      - key: PORT
+        value: 10000
+
+
+==================================================
+⚙️  КОНФИГ: .env.example
+==================================================
+
+# РўРѕРєРµРЅ Р±РѕС‚Р° РѕС‚ @BotFather
+BOT_TOKEN=7957782509:AAHtEnqo5ImFVItjtjs4DIDGiNzGBUQHCc8
+
+# РЎРµРєСЂРµС‚ РґР»СЏ Р·Р°РїСѓСЃРєР° Р±РѕС‚Р° С‡РµСЂРµР· РІРµР±
+LAUNCH_SECRET=darkprince123
+
+# РџРѕСЂС‚ РґР»СЏ РІРµР±-СЃРµСЂРІРµСЂР°
+PORT=10000
+
+# РќР°СЃС‚СЂРѕР№РєРё Р±Р°Р·С‹ РґР°РЅРЅС‹С…
+DB_PATH=data/monopoly.db
+
+# РќР°СЃС‚СЂРѕР№РєРё Р·Р°С‰РёС‚С‹
+MAX_REQUESTS_PER_MINUTE=30
+MAX_MESSAGES_PER_SECOND=5
+BAN_DURATION_MINUTES=60
+
+# РќР°СЃС‚СЂРѕР№РєРё РёРіСЂ
+INITIAL_BALANCE=1500
+JAIL_FINE=50
+AUTO_START_MINUTES=3
+INACTIVE_GAME_HOURS=24
+
+# ID Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂРѕРІ
+ADMIN_USER_IDS=7443667714,7131404858
+
+# РџРѕР»СЊР·РѕРІР°С‚РµР»Рё СЃ РґРѕСЃС‚СѓРїРѕРј Рє Р·Р°РїСѓСЃРєСѓ
+ALLOWED_LAUNCH_USERS=7443667714,7131404858
+
+
+==================================================
+⚙️  КОНФИГ: pyproject.toml
+==================================================
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "monopoly-bot"
+version = "1.0.0"
+dependencies = [
+    "aiogram==2.25.1",
+    "flask==2.3.3",
+    "python-dotenv==1.0.0",
+    "requests==2.28.2",
+]
+
+[tool.setuptools]
+python-requires = ">=3.9,<3.12"
+
+
