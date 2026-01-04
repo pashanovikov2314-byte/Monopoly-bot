@@ -2,6 +2,9 @@
 Точка входа для Render
 Просто запускает бота из bot/main.py
 """
+print("🚀 Запуск Monopoly Bot...")
+print("📁 Текущая директория:", __file__)
+
 import sys
 import os
 
@@ -13,6 +16,7 @@ try:
     from bot.main import main
     
     if __name__ == '__main__':
+        print("✅ Импорт бота успешен, запускаем...")
         main()
         
 except ImportError as e:
