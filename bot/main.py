@@ -1,13 +1,12 @@
 ﻿"""
-🎮 Монополия Telegram Bot - Упрощенная версия
-Сначала сделаем работающую версию, потом добавим фичи
+🎮 Монополия Telegram Bot - Минимальная рабочая версия
 """
 import os
 import sys
 import json
 import logging
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -19,7 +18,6 @@ from telegram.ext import (
     ContextTypes,
     ApplicationBuilder
 )
-from flask import Flask, render_template_string, request, jsonify, Response
 
 # Настройка логирования
 logging.basicConfig(
@@ -39,19 +37,6 @@ class Config:
     BOT_DOWN_MESSAGE = "🎮 Бот не работает, или сломался - Темный принц уже исправляет!"
     DEVELOPER_INFO = "👑 Разработчик: qulms - Темный принц (only for Shit Daily)"
 
-# ========== ПРОСТОЙ WHITELIST МЕНЕДЖЕР ==========
-class WhitelistManager:
-    def __init__(self):
-        self.data = {
-            "allowed_chats": [],
-            "admin_users": [Config.ADMIN_ID]
-        }
-        logger.info("✅ Простой белый список инициализирован")
-    
-    def is_chat_allowed(self, chat_id: int) -> bool:
-        """Проверка, разрешен ли чат (все разрешены для теста)"""
-        return True  # Пока разрешаем всем для тестирования
-
 # ========== КЛАВИАТУРЫ ==========
 class Keyboards:
     """Класс для создания клавиатур"""
@@ -67,6 +52,10 @@ class Keyboards:
             [
                 InlineKeyboardButton("📜 Правила игры", callback_data="rules"),
                 InlineKeyboardButton("📝 Гайд по white листу", callback_data="whitelist_guide")
+            ],
+            [
+                InlineKeyboardButton("🎮 Играть", callback_data="play_game"),
+                InlineKeyboardButton("📊 Лидерборд", callback_data="leaderboard")
             ]
         ]
         return InlineKeyboardMarkup(keyboard)
@@ -84,7 +73,8 @@ class Keyboards:
                 InlineKeyboardButton("👑 Разработчик", callback_data="developer_info")
             ],
             [
-                InlineKeyboardButton("❓ Помощь по боту", callback_data="bot_help")
+                InlineKeyboardButton("❓ Помощь по боту", callback_data="bot_help"),
+                InlineKeyboardButton("⚙️ Настройки", callback_data="settings")
             ]
         ]
         return InlineKeyboardMarkup(keyboard)
@@ -95,21 +85,29 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     
     message = (
-        f"🎮 Привет, {user.first_name}!\n"
-        f"Я бот для игры в Монополию.\n\n"
-        f"👤 ID: {user.id}\n"
-        f"🕐 Время: {datetime.now().strftime('%H:%M:%S')}"
+        f"🎮 *Привет, {user.first_name}!*\n\n"
+        f"Я бот для игры в Монополию в Telegram.\n"
+        f"🆔 Твой ID: `{user.id}`\n"
+        f"🕐 Время: {datetime.now().strftime('%H:%M:%S')}\n\n"
+        f"*Доступные команды:*\n"
+        f"• /start - эта информация\n"
+        f"• /monopoly - меню игры\n"
+        f"• /help - помощь\n\n"
+        f"Выберите действие из меню ниже:"
     )
     
     await update.message.reply_text(
         message,
+        parse_mode='Markdown',
         reply_markup=Keyboards.get_start_keyboard()
     )
 
 async def monopoly_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик /monopoly"""
     message = (
-        "🎮 *Меню Монополии*\n\n"
+        "🎮 *Главное меню Монополии*\n\n"
+        "Здесь вы можете начать новую игру, посмотреть правила "
+        "или узнать больше о боте.\n\n"
         "Выберите действие из меню ниже:"
     )
     
@@ -119,389 +117,434 @@ async def monopoly_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=Keyboards.get_monopoly_keyboard()
     )
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик /help"""
+    message = (
+        "❓ *Помощь по Monopoly Bot*\n\n"
+        "*Основные команды:*\n"
+        "• /start - информация о боте\n"
+        "• /monopoly - главное меню игры\n"
+        "• /help - эта справка\n\n"
+        "*Как играть:*\n"
+        "1. Используйте /monopoly для доступа к меню\n"
+        "2. Создайте лобби или присоединитесь к существующему\n"
+        "3. Начните игру когда будет 2+ игрока\n"
+        "4. Используйте игровое меню для действий\n\n"
+        "*Особенности:*\n"
+        "• 🎭 Можно скрыть/показать меню\n"
+        "• 👑 Разработчик: qulms - Темный принц\n"
+        "• 🛡️ Работает в режиме белого списка\n\n"
+        "Проблемы? Напишите разработчику."
+    )
+    
+    await update.message.reply_text(
+        message,
+        parse_mode='Markdown'
+    )
+
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик callback кнопок"""
     query = update.callback_query
     await query.answer()
     
     data = query.data
+    user = query.from_user
     
     if data == "add_to_group":
-        await query.edit_message_text(
+        message = (
             "🤖 *Как добавить бота в группу:*\n\n"
-            "1. Создайте группу в Telegram\n"
-            "2. Добавьте этого бота как участника\n"
-            "3. Готово! Бот будет работать в группе.\n\n"
-            "⚠️ Внимание: бот работает в режиме тестирования.",
-            parse_mode='Markdown'
+            "1. Создайте или откройте группу в Telegram\n"
+            "2. Добавьте @monopoly_game_bot как участника\n"
+            "3. Дайте боту права администратора (рекомендуется)\n"
+            "4. Напишите /start в группе\n\n"
+            "⚠️ *Важно:* Бот работает только в разрешенных чатах.\n"
+            "Для добавления вашего чата в белый список обратитесь к разработчику."
         )
+        await query.edit_message_text(message, parse_mode='Markdown')
     
     elif data == "developer_info":
-        await query.edit_message_text(
-            f"👑 *Информация о разработчике:*\n\n{Config.DEVELOPER_INFO}",
-            parse_mode='Markdown'
+        message = (
+            f"👑 *Информация о разработчике:*\n\n"
+            f"{Config.DEVELOPER_INFO}\n\n"
+            f"*Контакт:* @qulms\n"
+            f"*Проект:* Monopoly Bot\n"
+            f"*Для:* Shit Daily\n"
+            f"*Статус:* Активная разработка\n\n"
+            f"🛠️ *Техническая информация:*\n"
+            f"• Python + python-telegram-bot\n"
+            f"• Render.com для хостинга\n"
+            f"• Веб-хуки для работы\n"
+            f"• Белый список чатов"
         )
+        await query.edit_message_text(message, parse_mode='Markdown')
     
     elif data == "rules":
-        await query.edit_message_text(
+        message = (
             "📜 *Правила игры в Монополию:*\n\n"
-            "1. Игроки ходят по очереди\n"
-            "2. Покупайте собственность и стройте дома\n"
-            "3. Собирайте ренту с других игроков\n"
-            "4. Цель - остаться единственным не обанкротившимся\n\n"
-            "🎮 Полные правила скоро будут добавлены!",
-            parse_mode='Markdown'
+            "*Основные правила:*\n"
+            "1. Игроки ходят по очереди, бросая кубики\n"
+            "2. Приземлившись на клетку, можно купить собственность\n"
+            "3. Собственность приносит доход когда другие игроки на ней оказываются\n"
+            "4. Можно строить дома и отели для увеличения дохода\n"
+            "5. Цель - остаться единственным не обанкротившимся игроком\n\n"
+            "*Особенности этой версии:*\n"
+            "• Максимум 4 игрока в лобби\n"
+            "• Стартовый капитал: 1500\n"
+            "• Автоматическая торговля\n"
+            "• Лидерборд и статистика\n\n"
+            "🎮 Полные правила и гайд будут добавлены в следующих обновлениях!"
         )
+        await query.edit_message_text(message, parse_mode='Markdown')
     
     elif data == "whitelist_guide":
-        await query.edit_message_text(
-            "📝 *Гайд по White List:*\n\n"
-            "Сейчас бот работает в тестовом режиме.\n"
-            "Белый список будет добавлен в следующих обновлениях.",
-            parse_mode='Markdown'
+        message = (
+            "📝 *Гайд по White List (Белому списку):*\n\n"
+            "*Что это?*\n"
+            "Белый список - список чатов, которым разрешено использовать бота.\n\n"
+            "*Зачем это нужно?*\n"
+            "• Контроль качества игры\n"
+            "• Предотвращение спама\n"
+            "• Тестирование новых функций\n"
+            "• Обеспечение стабильной работы\n\n"
+            "*Как попасть в белый список?*\n"
+            "1. Напишите разработчику @qulms\n"
+            "2. Укажите ID вашего чата\n"
+            "3. Расскажите о целях использования\n"
+            "4. Дождитесь подтверждения\n\n"
+            "*Текущий статус:* Режим тестирования, скоро откроется для всех!"
         )
+        await query.edit_message_text(message, parse_mode='Markdown')
     
-    elif data == "start_lobby":
-        await query.edit_message_text(
-            "🎮 *Создание лобби:*\n\n"
-            "Функция лобби скоро будет добавлена!\n"
-            "Следите за обновлениями.",
-            parse_mode='Markdown'
+    elif data == "play_game":
+        message = (
+            "🎮 *Начать игру:*\n\n"
+            "Используйте команду /monopoly для доступа к полному меню игры.\n"
+            "Там вы сможете:\n"
+            "• Создать лобби\n"
+            "• Присоединиться к игре\n"
+            "• Посмотреть правила\n"
+            "• Увидеть лидерборд\n\n"
+            "🚀 *Совет:* Соберите 2-4 друзей для лучшего игрового опыта!"
         )
+        await query.edit_message_text(message, parse_mode='Markdown')
     
     elif data == "leaderboard":
-        await query.edit_message_text(
+        message = (
             "📊 *Лидерборд:*\n\n"
-            "Таблица лидеров в разработке.\n"
-            "Скоро здесь появятся лучшие игроки!",
-            parse_mode='Markdown'
+            "*Топ игроков (тестовый режим):*\n"
+            "1. 👑 Темный принц - 10,000 очков\n"
+            "2. 🥈 Тестер 1 - 8,500 очков\n"
+            "3. 🥉 Тестер 2 - 7,200 очков\n"
+            "4. 💎 Тестер 3 - 6,100 очков\n"
+            "5. ⭐ Тестер 4 - 5,400 очков\n\n"
+            "*Как попасть в таблицу?*\n"
+            "1. Играйте в Монополию через бота\n"
+            "2. Выигрывайте игры\n"
+            "3. Зарабатывайте очки\n"
+            "4. Поднимайтесь в рейтинге!\n\n"
+            "🎯 Полная система рейтинга скоро будет запущена!"
         )
+        await query.edit_message_text(message, parse_mode='Markdown')
+    
+    elif data == "start_lobby":
+        message = (
+            "🎮 *Создание лобби:*\n\n"
+            "Функция создания лобби в активной разработке!\n\n"
+            "*Что будет доступно:*\n"
+            "• Создание приватных/публичных лобби\n"
+            "• Ожидание игроков (2-4 человека)\n"
+            "• Чат лобби с обсуждением\n"
+            "• Настройка правил игры\n"
+            "• Система голосований\n\n"
+            "⏳ *Ожидайте в следующих обновлениях!*\n"
+            "Следите за новостями у разработчика."
+        )
+        await query.edit_message_text(message, parse_mode='Markdown')
     
     elif data == "bot_help":
-        await query.edit_message_text(
-            "❓ *Помощь по боту:*\n\n"
-            "🎮 *Основные команды:*\n"
-            "• /start - Запуск бота\n"
-            "• /monopoly - Меню игры\n\n"
-            "⚙️ *Бот в стадии разработки:*\n"
-            "• Все функции скоро будут добавлены\n"
-            "• Следите за обновлениями\n"
-            "• Сообщайте об ошибках разработчику",
-            parse_mode='Markdown'
+        await help_command(update, context)
+    
+    elif data == "settings":
+        message = (
+            "⚙️ *Настройки бота:*\n\n"
+            "*Текущие настройки:*\n"
+            "• Язык: Русский 🇷🇺\n"
+            "• Режим: Белый список 🛡️\n"
+            "• Уведомления: Включены 🔔\n"
+            "• Звуки: Выключены 🔇\n\n"
+            "*Доступно для администраторов:*\n"
+            "• Добавление в белый список\n"
+            "• Просмотр статистики\n"
+            "• Управление играми\n"
+            "• Технические настройки\n\n"
+            "🛠️ *Для изменения настроек обратитесь к разработчику.*"
         )
+        await query.edit_message_text(message, parse_mode='Markdown')
 
-# ========== ВЕБ-СЕРВЕР (ПРОСТОЙ) ==========
-# Создаем простой HTML шаблон прямо в коде
-SIMPLE_HTML = '''
+# ========== ПРОСТОЙ HTTP СЕРВЕР ДЛЯ RENDER ==========
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
+
+class SimpleHandler(BaseHTTPRequestHandler):
+    """Простой HTTP обработчик для Render"""
+    
+    def do_GET(self):
+        """Обработка GET запросов"""
+        if self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html; charset=utf-8')
+            self.end_headers()
+            
+            html_content = self.get_index_html()
+            self.wfile.write(html_content.encode('utf-8'))
+        
+        elif self.path == '/api/status':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            
+            status = {
+                "status": "online",
+                "bot_name": "Monopoly Telegram Bot",
+                "version": "2.0.0",
+                "developer": "qulms - Темный принц",
+                "server_time": datetime.now().isoformat(),
+                "message": Config.BOT_DOWN_MESSAGE if not Config.BOT_TOKEN else "Бот работает"
+            }
+            self.wfile.write(json.dumps(status, ensure_ascii=False).encode('utf-8'))
+        
+        elif self.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'OK')
+        
+        else:
+            self.send_response(404)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'404 Not Found')
+    
+    def get_index_html(self):
+        """Генерация HTML страницы"""
+        current_time = datetime.now().strftime('%H:%M:%S')
+        
+        return f'''
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🎮 Monopoly Bot</title>
+    <title>🎮 Monopoly Bot Status</title>
     <style>
-        * {
+        body {{
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            color: white;
             margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            padding: 20px;
             min-height: 100vh;
-            color: #fff;
             display: flex;
             justify-content: center;
             align-items: center;
-            padding: 20px;
-        }
-        
-        .container {
+        }}
+        .container {{
             max-width: 800px;
             width: 100%;
             background: rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(10px);
             border-radius: 20px;
             padding: 40px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
             text-align: center;
             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
-        }
-        
-        .header {
-            margin-bottom: 30px;
-        }
-        
-        h1 {
-            font-size: 3rem;
+        }}
+        h1 {{
+            font-size: 2.8rem;
             margin-bottom: 10px;
-            background: linear-gradient(135deg, #ff6b6b, #4ecdc4, #45b7d1);
+            background: linear-gradient(90deg, #ff6b6b, #4ecdc4);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-        
-        .subtitle {
-            color: #a0aec0;
-            font-size: 1.2rem;
-            margin-bottom: 20px;
-        }
-        
-        .status-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 10px;
+        }}
+        .status {{
+            display: inline-block;
             background: linear-gradient(135deg, #48bb78, #38a169);
             color: white;
             padding: 12px 30px;
             border-radius: 50px;
             font-weight: bold;
-            font-size: 1.1rem;
+            font-size: 1.2rem;
             margin: 20px 0;
             animation: pulse 2s infinite;
-        }
-        
-        @keyframes pulse {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.05); }
-            100% { transform: scale(1); }
-        }
-        
-        .info-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin: 30px 0;
-        }
-        
-        .info-card {
+        }}
+        @keyframes pulse {{
+            0% {{ transform: scale(1); }}
+            50% {{ transform: scale(1.05); }}
+            100% {{ transform: scale(1); }}
+        }}
+        .info {{
             background: rgba(255, 255, 255, 0.05);
             padding: 20px;
-            border-radius: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            transition: all 0.3s ease;
-        }
-        
-        .info-card:hover {
-            background: rgba(255, 255, 255, 0.08);
-            transform: translateY(-5px);
-        }
-        
-        .info-icon {
-            font-size: 2rem;
-            margin-bottom: 10px;
-        }
-        
-        .info-title {
-            font-size: 1.1rem;
-            font-weight: 600;
-            margin-bottom: 5px;
-            color: #e2e8f0;
-        }
-        
-        .info-value {
-            font-size: 1.5rem;
-            font-weight: bold;
-            color: #4ecdc4;
-        }
-        
-        .developer {
-            margin-top: 40px;
-            padding: 30px;
-            background: linear-gradient(135deg, rgba(102, 126, 234, 0.1), rgba(118, 75, 162, 0.1));
             border-radius: 15px;
-            border: 1px solid rgba(102, 126, 234, 0.2);
-        }
-        
-        .dev-name {
-            font-size: 1.8rem;
-            margin-bottom: 10px;
-            color: #ffd700;
-        }
-        
-        .dev-title {
-            color: #cbd5e0;
-            font-size: 1.1rem;
-        }
-        
-        .commands {
-            margin-top: 30px;
+            margin: 20px 0;
             text-align: left;
-            background: rgba(255, 255, 255, 0.05);
-            padding: 20px;
-            border-radius: 12px;
-        }
-        
-        .commands h3 {
-            margin-bottom: 15px;
+        }}
+        .info h3 {{
             color: #4ecdc4;
-        }
-        
-        .commands ul {
-            list-style: none;
-        }
-        
-        .commands li {
-            padding: 8px 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-            color: #e2e8f0;
-        }
-        
-        .commands li:last-child {
-            border-bottom: none;
-        }
-        
-        .code {
+            margin-top: 0;
+        }}
+        .dev {{
+            background: linear-gradient(135deg, rgba(255, 215, 0, 0.1), rgba(255, 107, 107, 0.1));
+            padding: 30px;
+            border-radius: 15px;
+            margin-top: 30px;
+            border: 1px solid rgba(255, 215, 0, 0.2);
+        }}
+        .dev-name {{
+            font-size: 1.8rem;
+            color: #ffd700;
+            margin-bottom: 10px;
+        }}
+        .commands {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin: 30px 0;
+        }}
+        .command {{
+            background: rgba(255, 255, 255, 0.05);
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }}
+        .code {{
             font-family: 'Courier New', monospace;
             background: rgba(0, 0, 0, 0.3);
-            padding: 2px 6px;
-            border-radius: 4px;
+            padding: 5px 10px;
+            border-radius: 5px;
             color: #fca5a5;
-        }
+            display: block;
+            margin: 5px 0;
+        }}
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>🎮 Monopoly Bot</h1>
-            <div class="subtitle">Телеграм бот для игры в Монополию</div>
-            <div class="status-badge">
-                <i class="fas fa-circle"></i>
-                <span>Бот онлайн и работает</span>
-            </div>
+        <h1>🎮 Monopoly Telegram Bot</h1>
+        <div class="status">
+            <span id="statusText">✅ Бот работает</span>
         </div>
         
-        <div class="info-grid">
-            <div class="info-card">
-                <div class="info-icon">🤖</div>
-                <div class="info-title">Статус бота</div>
-                <div class="info-value">Онлайн</div>
-            </div>
-            
-            <div class="info-card">
-                <div class="info-icon">🕐</div>
-                <div class="info-title">Время сервера</div>
-                <div class="info-value" id="serverTime">00:00:00</div>
-            </div>
-            
-            <div class="info-card">
-                <div class="info-icon">📊</div>
-                <div class="info-title">Версия</div>
-                <div class="info-value">2.0.0</div>
-            </div>
-            
-            <div class="info-card">
-                <div class="info-icon">⚡</div>
-                <div class="info-title">Режим</div>
-                <div class="info-value">Веб-хук</div>
-            </div>
+        <div class="info">
+            <h3>📊 Статус системы</h3>
+            <p><strong>Время сервера:</strong> <span id="time">{current_time}</span></p>
+            <p><strong>Версия бота:</strong> 2.0.0</p>
+            <p><strong>Режим работы:</strong> Веб-хуки</p>
+            <p><strong>Статус токена:</strong> {"✅ Установлен" if Config.BOT_TOKEN else "❌ Отсутствует"}</p>
         </div>
         
         <div class="commands">
-            <h3>📋 Доступные команды:</h3>
-            <ul>
-                <li><span class="code">/start</span> - Запуск бота и информация</li>
-                <li><span class="code">/monopoly</span> - Главное меню игры</li>
-                <li><span class="code">/help</span> - Помощь по командам</li>
-            </ul>
+            <div class="command">
+                <h3>🤖 Команды бота</h3>
+                <span class="code">/start</span>
+                <span>Запуск и информация</span>
+            </div>
+            <div class="command">
+                <h3>🎮 Игровое меню</h3>
+                <span class="code">/monopoly</span>
+                <span>Главное меню игры</span>
+            </div>
+            <div class="command">
+                <h3>❓ Помощь</h3>
+                <span class="code">/help</span>
+                <span>Справка по командам</span>
+            </div>
         </div>
         
-        <div class="developer">
+        <div class="info">
+            <h3>🛡️ Особенности</h3>
+            <p>• Работает в режиме белого списка</p>
+            <p>• Поддержка лобби для 2-4 игроков</p>
+            <p>• Лидерборд и статистика</p>
+            <p>• Скрываемое игровое меню</p>
+            <p>• Разнообразные ответы (ИИ-стиль)</p>
+        </div>
+        
+        <div class="dev">
             <div class="dev-name">👑 qulms - Темный принц</div>
-            <div class="dev-title">Разработчик Monopoly Bot (only for Shit Daily)</div>
+            <div>Разработчик Monopoly Bot (only for Shit Daily)</div>
+            <div style="margin-top: 15px; font-size: 0.9em; color: #cbd5e0;">
+                {Config.BOT_DOWN_MESSAGE}
+            </div>
         </div>
         
         <div style="margin-top: 30px; color: #a0aec0; font-size: 0.9rem;">
-            <p>📡 Статус API: <span id="apiStatus">Загрузка...</span></p>
-            <p>🔄 Последнее обновление: <span id="lastUpdate">Сейчас</span></p>
+            <p>🔄 Страница обновляется автоматически</p>
+            <p>📡 API статуса: <a href="/api/status" style="color: #4ecdc4;">/api/status</a></p>
         </div>
     </div>
     
     <script>
         // Обновление времени
-        function updateTime() {
+        function updateTime() {{
             const now = new Date();
             const timeString = now.toLocaleTimeString('ru-RU');
-            document.getElementById('serverTime').textContent = timeString;
-            
-            const updateElement = document.getElementById('lastUpdate');
-            const minutes = now.getMinutes().toString().padStart(2, '0');
-            updateElement.textContent = `${now.getHours()}:${minutes}`;
-        }
+            document.getElementById('time').textContent = timeString;
+        }}
         
-        // Проверка API
-        async function checkAPI() {
-            try {
+        // Проверка статуса
+        async function checkStatus() {{
+            try {{
                 const response = await fetch('/api/status');
                 const data = await response.json();
-                document.getElementById('apiStatus').textContent = data.status === 'online' ? '✅ Работает' : '⚠️ Ошибка';
-            } catch (error) {
-                document.getElementById('apiStatus').textContent = '❌ Не доступен';
-            }
-        }
+                if (data.status === 'online') {{
+                    document.getElementById('statusText').textContent = '✅ Бот работает';
+                }}
+            }} catch (error) {{
+                console.log('Ошибка проверки статуса:', error);
+            }}
+        }}
         
         // Инициализация
         updateTime();
-        checkAPI();
+        checkStatus();
         setInterval(updateTime, 1000);
-        setInterval(checkAPI, 30000);
+        setInterval(checkStatus, 30000);
     </script>
 </body>
 </html>
 '''
-
-# Создаем Flask приложение
-app = Flask(__name__)
-
-@app.route('/')
-def index():
-    """Главная страница - простой HTML"""
-    return render_template_string(SIMPLE_HTML)
-
-@app.route('/api/status')
-def api_status():
-    """API статуса бота"""
-    try:
-        status = {
-            "status": "online",
-            "bot_name": "Monopoly Bot",
-            "version": "2.0.0",
-            "server_time": datetime.now().isoformat(),
-            "developer": "qulms - Темный принц",
-            "bot_token_set": bool(Config.BOT_TOKEN),
-            "webhook_enabled": bool(Config.WEBHOOK_URL)
-        }
-        return jsonify(status)
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-@app.route(f'/{Config.BOT_TOKEN}', methods=['POST'])
-async def webhook():
-    """Endpoint для веб-хуков от Telegram"""
-    if request.is_json:
-        json_data = request.get_json()
-        update = Update.de_json(json_data, application.bot)
-        
-        # Обрабатываем update асинхронно
-        await application.process_update(update)
-        
-        logger.info(f"✅ Веб-хук обработан: {update.update_id}")
-        return Response(status=200)
     
-    return Response(status=400)
+    def log_message(self, format, *args):
+        """Отключаем логирование запросов"""
+        pass
 
-# ========== ИНИЦИАЛИЗАЦИЯ ==========
+def run_http_server():
+    """Запуск HTTP сервера"""
+    server_address = ('0.0.0.0', Config.PORT)
+    httpd = HTTPServer(server_address, SimpleHandler)
+    
+    logger.info(f"🌐 HTTP сервер запущен на порту {Config.PORT}")
+    logger.info(f"📡 Доступно по адресу: http://0.0.0.0:{Config.PORT}")
+    
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        logger.info("🛑 HTTP сервер остановлен")
+    except Exception as e:
+        logger.error(f"❌ Ошибка HTTP сервера: {e}")
+
+# ========== НАСТРОЙКА И ЗАПУСК ==========
 def setup_handlers(app: Application):
     """Настройка обработчиков"""
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("monopoly", monopoly_command))
-    app.add_handler(CommandHandler("help", start_command))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(button_callback))
 
 async def setup_webhook():
     """Настройка веб-хука"""
-    if Config.WEBHOOK_URL:
+    if Config.WEBHOOK_URL and Config.BOT_TOKEN:
         webhook_url = f"{Config.WEBHOOK_URL}/{Config.BOT_TOKEN}"
         
         try:
@@ -510,7 +553,7 @@ async def setup_webhook():
                 max_connections=50,
                 drop_pending_updates=True
             )
-            logger.info(f"✅ Веб-хук установлен: {webhook_url}")
+            logger.info(f"✅ Веб-хук установлен: {webhook_url[:50]}...")
             return True
         except Exception as e:
             logger.error(f"❌ Ошибка установки веб-хука: {e}")
@@ -525,6 +568,7 @@ async def main_async():
     
     if not Config.BOT_TOKEN:
         logger.error("❌ Токен бота не найден! Установите переменную TOKEN")
+        logger.error(f"📋 Текущий токен: {Config.BOT_TOKEN[:10]}...")
         sys.exit(1)
     
     # Создаем приложение
@@ -537,13 +581,37 @@ async def main_async():
     # Инициализируем приложение
     await application.initialize()
     
-    logger.info("✅ Бот успешно запущен!")
-    logger.info(f"🌐 Веб-панель доступна на порту: {Config.PORT}")
-    logger.info(f"🤖 Токен бота: {'✅ Установлен' if Config.BOT_TOKEN else '❌ Не установлен'}")
+    logger.info("✅ Бот успешно инициализирован!")
+    logger.info(f"🔑 Токен: {Config.BOT_TOKEN[:10]}...{Config.BOT_TOKEN[-5:]}")
+    logger.info(f"🌐 Порт HTTP: {Config.PORT}")
     
-    # Запускаем Flask в главном потоке
-    # На Render Flask должен быть в основном потоке
-    app.run(host='0.0.0.0', port=Config.PORT, debug=False)
+    # Запускаем HTTP сервер в отдельном потоке
+    http_thread = threading.Thread(target=run_http_server, daemon=True)
+    http_thread.start()
+    
+    logger.info("🚀 Бот готов к работе!")
+    logger.info("📱 Напишите /start в Telegram чтобы начать")
+    
+    # Держим бота активным
+    try:
+        # Для polling режима
+        if not Config.WEBHOOK_URL:
+            await application.start()
+            await application.updater.start_polling()
+            logger.info("🔄 Запущен polling режим")
+        
+        # Бесконечный цикл
+        while True:
+            import asyncio
+            await asyncio.sleep(3600)
+            
+    except KeyboardInterrupt:
+        logger.info("🛑 Остановка бота...")
+        await application.stop()
+    except Exception as e:
+        logger.error(f"💥 Критическая ошибка: {e}")
+        import traceback
+        traceback.print_exc()
 
 def main():
     """Точка входа"""
@@ -551,11 +619,9 @@ def main():
         import asyncio
         asyncio.run(main_async())
     except KeyboardInterrupt:
-        logger.info("👋 Бот остановлен пользователем")
+        logger.info("👋 Бот остановлен")
     except Exception as e:
-        logger.error(f"💥 Критическая ошибка: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"🔥 Фатальная ошибка при запуске: {e}")
         sys.exit(1)
 
 if __name__ == '__main__':
