@@ -1,0 +1,18 @@
+﻿{
+    "allowed_chats": [
+        {
+            "chat_id": -100123456789,
+            "chat_name": "Основной чат Monopoly",
+            "owner_id": 795778250,
+            "added_date": "2024-01-01",
+            "active": true
+        }
+    ],
+    "admin_users": [795778250],
+    "web_access_users": [795778250],
+    "settings": {
+        "allow_private_messages": true,
+        "max_games_per_chat": 1,
+        "default_game_language": "ru"
+    }
+}
