@@ -2,5 +2,4 @@
 python-telegram-bot==20.3
 pymongo[srv]==4.3.3
 requests==2.31.0
-pyngrok==7.1.4
 python-dotenv==1.0.0
