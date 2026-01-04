@@ -1,30 +1,40 @@
-﻿# -*- coding: utf-8 -*-
-"""Основной класс бота"""
-
+﻿"""
+Модуль для настройки приложения Telegram бота
+"""
 import logging
-from telegram.ext import Application
-from bot.handlers.commands import register_commands
-from bot.handlers.callbacks import register_callbacks
-from bot.handlers.messages import register_messages
-from bot.handlers.game_handlers import register_game_handlers
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
+from bot.handlers.commands import start, new_game, join_game, roll_dice, buy_property
+from bot.handlers.callbacks import button_callback
+from bot.handlers.messages import handle_message
 
 logger = logging.getLogger(__name__)
 
-class MonopolyBot:
-    def __init__(self, token):
-        self.token = token
-        self.application = Application.builder().token(token).build()
-        self._setup_handlers()
+def setup_application():
+    """Настройка и конфигурация приложения Telegram бота"""
     
-    def _setup_handlers(self):
-        """Настройка всех обработчиков"""
-        register_commands(self.application)
-        register_callbacks(self.application)
-        register_messages(self.application)
-        register_game_handlers(self.application)
-        logger.info("Все обработчики зарегистрированы")
+    # Получаем токен из переменных окружения
+    import os
+    TOKEN = os.getenv('TOKEN')
     
-    def run(self):
-        """Запуск бота"""
-        logger.info("Бот запускается...")
-        self.application.run_polling()
+    if not TOKEN:
+        logger.error("❌ Токен бота не найден! Установите переменную окружения TOKEN")
+        raise ValueError("TOKEN не установлен")
+    
+    # Создаем приложение
+    application = ApplicationBuilder().token(TOKEN).build()
+    
+    # Регистрируем обработчики команд
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("new_game", new_game))
+    application.add_handler(CommandHandler("join", join_game))
+    application.add_handler(CommandHandler("roll", roll_dice))
+    application.add_handler(CommandHandler("buy", buy_property))
+    
+    # Регистрируем обработчики callback-кнопок
+    application.add_handler(CallbackQueryHandler(button_callback))
+    
+    # Регистрируем обработчики сообщений
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    logger.info("✅ Приложение Telegram настроено")
+    return application
