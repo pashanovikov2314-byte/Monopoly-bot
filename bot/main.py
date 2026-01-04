@@ -1,6 +1,7 @@
 ﻿"""
 🎮 Монополия Telegram Bot
 С поддержкой белого списка и всех фич
+Без обязательной MongoDB
 """
 import os
 import sys
@@ -34,6 +35,10 @@ class Config:
     PORT = int(os.getenv('PORT', 8080))
     ADMIN_ID = 795778250
     WHITELIST_PATH = Path('config/whitelist.json')
+    
+    # MongoDB опциональна
+    MONGODB_URI = os.getenv('MONGODB_URI', '')
+    USE_MONGODB = bool(MONGODB_URI)
     
     # Сообщения
     BOT_DOWN_MESSAGE = "🎮 Бот не работает, или сломался - Темный принц уже исправляет!"
@@ -99,6 +104,42 @@ class WhitelistManager:
             self.save_whitelist()
             return True
         return False
+
+# ========== ИГРОВОЙ МЕНЕДЖЕР (БЕЗ БАЗЫ ДАННЫХ) ==========
+class GameManager:
+    """Упрощенный менеджер игр без MongoDB"""
+    
+    def __init__(self):
+        self.active_games = {}
+        self.lobbies = {}
+        logger.info("✅ Игровой менеджер инициализирован (без базы данных)")
+    
+    def create_lobby(self, chat_id: int, creator_id: int, creator_name: str):
+        """Создание лобби"""
+        lobby_id = f"{chat_id}_{int(datetime.now().timestamp())}"
+        self.lobbies[lobby_id] = {
+            "chat_id": chat_id,
+            "creator_id": creator_id,
+            "creator_name": creator_name,
+            "players": [{"id": creator_id, "name": creator_name}],
+            "created_at": datetime.now().isoformat(),
+            "status": "waiting"
+        }
+        return lobby_id
+    
+    def join_lobby(self, lobby_id: str, player_id: int, player_name: str):
+        """Присоединение к лобби"""
+        if lobby_id in self.lobbies:
+            lobby = self.lobbies[lobby_id]
+            # Проверяем, не присоединился ли уже
+            for player in lobby["players"]:
+                if player["id"] == player_id:
+                    return False, "Вы уже в лобби"
+            
+            # Добавляем игрока
+            lobby["players"].append({"id": player_id, "name": player_name})
+            return True, "Вы присоединились к лобби"
+        return False, "Лобби не найдено"
 
 # ========== СООБЩЕНИЯ (С РАЗНООБРАЗИЕМ) ==========
 class MessageVariants:
@@ -209,16 +250,18 @@ class Keyboards:
         ]
         return InlineKeyboardMarkup(keyboard)
 
+# Глобальные менеджеры
+whitelist_manager = WhitelistManager()
+game_manager = GameManager()
+
 # ========== ОБРАБОТЧИКИ КОМАНД ==========
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик /start"""
     user = update.effective_user
     chat = update.effective_chat
     
-    whitelist = WhitelistManager()
-    
     # Проверяем разрешен ли чат (только для групповых чатов)
-    if chat.type != 'private' and not whitelist.is_chat_allowed(chat.id):
+    if chat.type != 'private' and not whitelist_manager.is_chat_allowed(chat.id):
         await update.message.reply_text(
             "❌ Этот бот недоступен для этой группы.\n"
             "Обратитесь к разработчику для добавления в белый список."
@@ -236,10 +279,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def monopoly_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик /monopoly"""
     chat = update.effective_chat
-    whitelist = WhitelistManager()
     
     # Проверяем разрешен ли чат
-    if chat.type != 'private' and not whitelist.is_chat_allowed(chat.id):
+    if chat.type != 'private' and not whitelist_manager.is_chat_allowed(chat.id):
         await update.message.reply_text(
             "❌ Команда доступна только в разрешенных чатах."
         )
@@ -265,8 +307,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     chat = update.effective_chat
     
-    whitelist = WhitelistManager()
-    
     # Обработка разных callback
     if data == "add_to_group":
         message = (
@@ -274,7 +314,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "1. Создайте группу в Telegram\n"
             "2. Добавьте этого бота как участника\n"
             "3. Бот автоматически проверит доступность\n"
-            "4. Если группа не в белом списке, обратитесь к @qulms\n\n"
+            "4. Если группа не в белом списке, обратитесь к разработчику\n\n"
             "⚠️ Бот работает только в разрешенных чатах!"
         )
         await query.edit_message_text(message, parse_mode='Markdown')
@@ -300,7 +340,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📝 *Гайд по White List:*\n\n"
             "Бот работает только в определенных группах.\n\n"
             "✅ *Как попасть в белый список:*\n"
-            "1. Напишите разработчику @qulms\n"
+            "1. Напишите разработчику\n"
             "2. Укажите ID вашей группы\n"
             "3. Дождитесь подтверждения\n\n"
             "🛡️ *Текущие ограничения:*\n"
@@ -312,17 +352,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif data == "start_lobby":
         # Проверяем разрешен ли чат
-        if chat.type != 'private' and not whitelist.is_chat_allowed(chat.id):
+        if chat.type != 'private' and not whitelist_manager.is_chat_allowed(chat.id):
             await query.edit_message_text(
                 "❌ Создание лобби доступно только в разрешенных чатах."
             )
             return
         
         # Создаем лобби
-        lobby_id = f"{chat.id}_{datetime.now().timestamp()}"
+        lobby_id = game_manager.create_lobby(chat.id, user.id, user.first_name)
+        lobby = game_manager.lobbies[lobby_id]
+        
+        players_list = "\n".join([f"• {p['name']}" for p in lobby["players"]])
         message = (
             f"🎮 *Лобби создано!*\n\n"
-            f"👥 Игроки: 1/{Config.MIN_PLAYERS}\n"
+            f"👥 Игроки ({len(lobby['players'])}/4):\n{players_list}\n\n"
             f"👤 Создатель: {user.first_name}\n"
             f"🆔 ID лобби: `{lobby_id[:8]}`\n\n"
             f"Присоединяйтесь, чтобы начать игру!"
@@ -333,6 +376,34 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown',
             reply_markup=Keyboards.get_lobby_keyboard(lobby_id)
         )
+    
+    elif data.startswith("join_"):
+        lobby_id = data.split("join_")[1]
+        success, result = game_manager.join_lobby(lobby_id, user.id, user.first_name)
+        
+        if success:
+            lobby = game_manager.lobbies[lobby_id]
+            players_list = "\n".join([f"• {p['name']}" for p in lobby["players"]])
+            message = (
+                f"✅ *{user.first_name} присоединился!*\n\n"
+                f"👥 Игроки ({len(lobby['players'])}/4):\n{players_list}"
+            )
+            
+            await query.edit_message_text(
+                message,
+                parse_mode='Markdown',
+                reply_markup=Keyboards.get_lobby_keyboard(lobby_id)
+            )
+        else:
+            await query.answer(result, show_alert=True)
+    
+    elif data.startswith("players_"):
+        lobby_id = data.split("players_")[1]
+        if lobby_id in game_manager.lobbies:
+            lobby = game_manager.lobbies[lobby_id]
+            players_list = "\n".join([f"• {p['name']}" for p in lobby["players"]])
+            message = f"👥 *Игроки в лобби:*\n\n{players_list}"
+            await query.answer(message, show_alert=True)
     
     elif data.startswith("hide_menu_"):
         player_id = int(data.split("_")[2])
@@ -375,28 +446,38 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.edit_message_text(message, parse_mode='Markdown')
 
+async def return_menu_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик текста 'вернуть меню'"""
+    if update.message.text.lower() == "вернуть меню":
+        await update.message.reply_text(
+            "✅ Меню возвращено!",
+            reply_markup=Keyboards.get_game_keyboard(update.effective_user.id)
+        )
+
 # ========== ВЕБ-СЕРВЕР ДЛЯ МОНИТОРИНГА ==========
 app = Flask(__name__)
 
 @app.route('/')
 def index():
     """Главная страница веб-панели"""
-    # Здесь будет проверка авторизации
+    # Базовая защита - можно расширить
     return render_template('dashboard.html')
 
 @app.route('/api/status')
 def api_status():
     """API для проверки статуса бота"""
     try:
-        whitelist = WhitelistManager()
         status = {
             "status": "online",
             "bot_name": "Monopoly Bot",
             "version": "2.0.0",
-            "whitelisted_chats": len(whitelist.data["allowed_chats"]),
-            "active_games": 0,
+            "whitelisted_chats": len(whitelist_manager.data["allowed_chats"]),
+            "active_games": len(game_manager.active_games),
+            "active_lobbies": len(game_manager.lobbies),
+            "use_mongodb": Config.USE_MONGODB,
             "uptime": "0 дней",
-            "developer": "qulms - Темный принц"
+            "developer": "qulms - Темный принц",
+            "bot_down_message": Config.BOT_DOWN_MESSAGE
         }
         return jsonify(status)
     except Exception as e:
@@ -408,16 +489,7 @@ def setup_handlers(application):
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("monopoly", monopoly_command))
     application.add_handler(CallbackQueryHandler(button_callback))
-    
-    # Обработчик текстовых сообщений для команды "вернуть меню"
-    async def return_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.message.text.lower() == "вернуть меню":
-            await update.message.reply_text(
-                "✅ Меню возвращено!",
-                reply_markup=Keyboards.get_game_keyboard(update.effective_user.id)
-            )
-    
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, return_menu))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, return_menu_text))
 
 def main():
     """Основная функция запуска"""
@@ -425,12 +497,19 @@ def main():
         logger.error("❌ Токен бота не найден! Установите переменную TOKEN")
         sys.exit(1)
     
+    # Информируем о MongoDB
+    if not Config.USE_MONGODB:
+        logger.warning("⚠️ MongoDB не настроена. Игра будет работать в упрощенном режиме.")
+    
     # Создаем приложение
     application = Application.builder().token(Config.BOT_TOKEN).build()
     setup_handlers(application)
     
     # Запускаем бота
     logger.info("🚀 Бот Monopoly запускается...")
+    logger.info(f"✅ Белый список: {len(whitelist_manager.data['allowed_chats'])} чатов")
+    logger.info(f"✅ MongoDB: {'Включена' if Config.USE_MONGODB else 'Отключена'}")
+    
     application.run_polling()
 
 if __name__ == '__main__':
