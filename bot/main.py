@@ -20,6 +20,44 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Получение конфигурации из переменных окружения
+import os
+from dotenv import load_dotenv
+
+# Загружаем .env файл для локальной разработки (игнорируется на Render)
+load_dotenv()
+
+# Получаем переменные окружения с fallback значениями для разработки
+TOKEN = os.getenv('TOKEN', '')
+WEBHOOK_URL = os.getenv('WEBHOOK_URL', '').rstrip('/')
+MONGODB_URI = os.getenv('MONGODB_URI', '')
+PORT = int(os.getenv('PORT', '8080'))
+
+# Логируем полученные значения (без показа секретов)
+logger.info(f"PORT: {PORT}")
+logger.info(f"WEBHOOK_URL: {WEBHOOK_URL[:50] if WEBHOOK_URL else 'Не установлен'}")
+logger.info(f"MONGODB_URI установлен: {'Да' if MONGODB_URI else 'Нет'}")
+logger.info(f"TOKEN установлен: {'Да' if TOKEN else 'Нет'}")
+
+# Проверка обязательных переменных
+if not TOKEN:
+    logger.error("""
+    ❌ Токен бота не найден!
+    
+    НЕОБХОДИМО УСТАНОВИТЬ НА RENDER:
+    1. TOKEN - токен бота из @BotFather
+    2. MONGODB_URI - строка подключения к MongoDB Atlas
+    3. WEBHOOK_URL - URL вашего приложения на Render
+    
+    Как установить на Render:
+    1. Зайдите в Dashboard Render
+    2. Выберите ваше приложение Monopoly-bot
+    3. Нажмите 'Environment' в меню слева
+    4. Добавьте переменные:
+       - TOKEN=ваш_токен_бота
+       - MONGODB_URI=ваша_строка_подключения_mongodb
+       - WEBHOOK_URL=https://ваш-бота.onrender.com
+    """)
+    sys.exit(1)
 TOKEN = os.getenv('TOKEN')
 WEBHOOK_URL = os.getenv('WEBHOOK_URL', '').rstrip('/')
 MONGODB_URI = os.getenv('MONGODB_URI', '')  # ДОБАВЛЕНО: URI для MongoDB
@@ -150,5 +188,6 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"Критическая ошибка: {e}", exc_info=True)
         sys.exit(1)
+
 
 
